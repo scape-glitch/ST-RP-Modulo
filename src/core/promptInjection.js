@@ -13,15 +13,7 @@ let initialized = false;
 let lastContent = null;
 
 export function buildCombinedPrompt(ctx) {
-  const chunks = [];
-  for (const mod of ctx.registry.getEnabledModules()) {
-    if (typeof mod.buildPrompt !== 'function') continue;
-    const mctx = ctx.registry.getModuleContext(mod.id);
-    const content = mod.buildPrompt(mctx);
-    if (!content) continue;
-    chunks.push(`<!-- RP Suite module: ${mod.id}; profile: ${mctx.connectionProfile?.name || 'default'}; model: ${mctx.model || 'unknown'} -->\n${content}`);
-  }
-  const prompt = chunks.join('\n\n');
+  const prompt = '';
   return substituteParams ? substituteParams(prompt) : prompt;
 }
 

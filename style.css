@@ -1,9 +1,13 @@
 .rpsuite-root { --rpsuite-bg: rgba(30,30,40,.72); --rpsuite-border: rgba(255,255,255,.12); --rpsuite-text: var(--SmartThemeBodyColor, #eee); --rpsuite-muted: color-mix(in srgb, var(--rpsuite-text), transparent 35%); margin: 10px 0; padding: 12px; border: 1px solid var(--rpsuite-border); border-radius: 12px; background: var(--rpsuite-bg); color: var(--rpsuite-text); }
-.rpsuite-header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
+.rpsuite-details { display:block; }
+.rpsuite-header { display:flex; align-items:center; justify-content:space-between; gap:12px; cursor:pointer; }
+.rpsuite-details[open] .rpsuite-header { margin-bottom:10px; }
+.rpsuite-body { display:grid; gap:10px; }
 .rpsuite-title { font-weight:700; font-size:1.05rem; }
 .rpsuite-subtitle { color:var(--rpsuite-muted); font-size:.85rem; }
 .rpsuite-badge { border:1px solid var(--rpsuite-border); border-radius:999px; padding:2px 8px; font-size:.75rem; color:var(--rpsuite-muted); }
 .rpsuite-notice { margin:8px 0; padding:8px 10px; border-radius:10px; background:rgba(255,193,7,.12); border:1px solid rgba(255,193,7,.35); }
+.rpsuite-warning { margin:8px 0; padding:8px 10px; border-radius:10px; background:rgba(255,193,7,.12); border:1px solid rgba(255,193,7,.35); }
 .rpsuite-modules { display:grid; gap:10px; }
 .rpsuite-module { border:1px solid var(--rpsuite-border); border-radius:12px; padding:10px; background:rgba(0,0,0,.16); }
 .rpsuite-module-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
@@ -15,6 +19,7 @@
 .rpsuite-field select, .rpsuite-field input[type="checkbox"] { accent-color: var(--SmartThemeQuoteColor, #8ab4ff); }
 .rpsuite-profile-model { font-size:.78rem; color:var(--rpsuite-muted); }
 .rpsuite-message-blocks { display:flex; flex-direction:column; gap:8px; margin:8px 0 4px; }
+.rpsuite-html-creator-generated { margin-top:8px; }
 .rpsuite-card { border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:10px; background:rgba(20,20,28,.65); color:var(--SmartThemeBodyColor,#eee); box-shadow:0 8px 22px rgba(0,0,0,.16); }
 .rpsuite-card-title { display:flex; align-items:center; gap:8px; font-weight:800; margin-bottom:8px; }
 .rpsuite-hidden-source { display:none !important; }

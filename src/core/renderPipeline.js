@@ -1,17 +1,18 @@
 import { cleanHiddenJSONText } from './jsonRepair.js';
 
-function getMessageId($mes) {
+export function getMessageId($mes) {
   return $mes.attr('mesid') || $mes.data('mesid') || $mes.attr('id') || String($mes.index());
 }
 
-function getMessageText($mes) {
+export function getMessageText($mes) {
   const $text = $mes.find('.mes_text').first();
+  const $clone = ($text.length ? $text : $mes).clone();
+  $clone.find('.rpsuite-message-blocks, .rpsuite-html-creator-generated').remove();
   const html = $text.length ? $text.html() : $mes.html();
-  const text = $text.length ? $text.text() : $mes.text();
-  return `${html || ''}\n${text || ''}`;
+  return `${html || ''}\n${$clone.text() || ''}`;
 }
 
-function ensureSuiteContainer(ctx, $mes) {
+export function ensureSuiteContainer($mes, ctx = {}) {
   const $ = ctx.$ || window.jQuery;
   const id = getMessageId($mes);
   let $container = $mes.find(`.rpsuite-message-blocks[data-rpsuite-message-id="${id}"]`).first();
@@ -24,8 +25,24 @@ function ensureSuiteContainer(ctx, $mes) {
   return $container;
 }
 
-export function renderMessageModules($mes, ctx) {
+export function removeSuiteContainer($mes) {
+  $mes.find('.rpsuite-message-blocks').remove();
+}
+
+export function renderModuleResults($mes, results = [], ctx = {}) {
   const $ = ctx.$ || window.jQuery;
+  const sorted = [...results].filter((item) => item?.html).sort((a, b) => (a.order || 0) - (b.order || 0));
+  if (!sorted.length) {
+    removeSuiteContainer($mes);
+    return null;
+  }
+  const $container = ensureSuiteContainer($mes, ctx);
+  $container.empty().attr('data-rpsuite-generated', '1');
+  for (const item of sorted) $container.append($(item.html).attr('data-rpsuite-module', item.id));
+  return $container;
+}
+
+export function renderMessageModules($mes, ctx) {
   if (!$mes?.length || !ctx.registry) return;
   const messageText = getMessageText($mes);
   const results = [];
@@ -40,11 +57,7 @@ export function renderMessageModules($mes, ctx) {
     results.push({ id: mod.id, order: mod.renderOrder, html });
   }
 
-  results.sort((a, b) => a.order - b.order);
-  const $container = ensureSuiteContainer(ctx, $mes);
-  $container.empty();
-  for (const item of results) $container.append($(item.html));
-  if (!results.length) $container.remove();
+  renderModuleResults($mes, results, ctx);
 
   const htmlCreator = ctx.registry.getModule('html_creator');
   if (htmlCreator && ctx.registry.getEnabledModules().some((m) => m.id === 'html_creator')) {

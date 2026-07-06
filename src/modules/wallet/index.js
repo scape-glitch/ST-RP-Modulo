@@ -58,6 +58,8 @@ export function render(data, ctx) {
     return $w;
   }
   const items = (state.items || []).slice(0, 12).map((it) => `<li><b>${esc(it.qty ?? 1)}× ${esc(it.name)}</b>${it.note ? `<span>${esc(it.note)}</span>` : ''}</li>`).join('');
-  $w.html(`<div class="rpsuite-wallet-head">💰 ${lang === 'ru' ? 'Кошелек' : 'Wallet'}</div><div class="rpsuite-wallet-balance">${esc(state.balance)} ${esc(state.currency)}</div><ul>${items}</ul>${state.log?.length ? `<div class="rpsuite-wallet-log">${esc(state.log[state.log.length - 1])}</div>` : ''}`);
+  const debts = (state.debts || []).slice(0, 8).map((debt) => `<li>${esc(typeof debt === 'string' ? debt : `${debt.name || ''} ${debt.amount || ''} ${debt.note || ''}`)}</li>`).join('');
+  const notes = state.notes ? `<div class="rpsuite-wallet-log">${esc(state.notes)}</div>` : '';
+  $w.html(`<div class="rpsuite-wallet-head">💰 ${lang === 'ru' ? 'Кошелек' : 'Wallet'}</div><div class="rpsuite-wallet-balance">${esc(state.balance)} ${esc(state.currency)}</div><ul>${items}</ul>${debts ? `<div class="rpsuite-wallet-log"><b>${lang === 'ru' ? 'Долги' : 'Debts'}:</b><ul>${debts}</ul></div>` : ''}${notes}${state.log?.length ? `<div class="rpsuite-wallet-log">${esc(state.log[state.log.length - 1])}</div>` : ''}`);
   return $w;
 }

@@ -1,6 +1,7 @@
 import { LANGS, t, moduleDisplayName } from '../core/i18n.js';
 import { getSettings, updateModuleSettings, normalizeConnectionProfiles } from '../core/settings.js';
 import { renderAllMessages } from '../core/renderPipeline.js';
+import { resetModuleRunnerState, runAllEnabledPostGenerationModules } from '../core/moduleRunner.js';
 import { updateExtensionPrompt } from '../core/promptInjection.js';
 import { option, escapeHtml } from './controls.js';
 
@@ -56,31 +57,34 @@ export function renderDrawer(ctx) {
 
 function bindDrawer(ctx) {
   const $ = ctx.$ || window.jQuery;
+  const refreshActiveModules = () => {
+    resetModuleRunnerState();
+    updateExtensionPrompt(ctx);
+    renderAllMessages(ctx);
+    runAllEnabledPostGenerationModules(ctx).catch((error) => console.error('[RP Suite] settings-triggered module run failed:', error));
+  };
   $('#rpsuite-root').off('.rpsuite');
   $('#rpsuite-root').on('change.rpsuite', '.rpsuite-enabled-toggle', function () {
     const moduleId = this.dataset.moduleId;
     updateModuleSettings(moduleId, { enabled: this.checked });
     ctx.registry.syncModule(moduleId);
-    updateExtensionPrompt(ctx);
-    renderAllMessages(ctx);
+    refreshActiveModules();
     if (moduleId === 'html_creator' && this.checked) ctx.registry.getModule('html_creator')?.wireAll?.(ctx.registry.getModuleContext('html_creator'));
     renderDrawer(ctx);
   });
   $('#rpsuite-root').on('change.rpsuite', '.rpsuite-lang-select', function () {
     updateModuleSettings(this.dataset.moduleId, { lang: this.value });
-    updateExtensionPrompt(ctx);
-    renderAllMessages(ctx);
+    refreshActiveModules();
     renderDrawer(ctx);
   });
   $('#rpsuite-root').on('change.rpsuite', '.rpsuite-profile-select', function () {
     updateModuleSettings(this.dataset.moduleId, { connectionProfile: this.value });
-    updateExtensionPrompt(ctx);
+    refreshActiveModules();
     renderDrawer(ctx);
   });
   $('#rpsuite-root').on('change.rpsuite', '.rpsuite-deck-select', function () {
     updateModuleSettings('tarot', { deckStyle: this.value });
-    updateExtensionPrompt(ctx);
-    renderAllMessages(ctx);
+    refreshActiveModules();
     renderDrawer(ctx);
   });
 }
