@@ -41,7 +41,7 @@ export function initEvents(ctx) {
     eventSource.on(type, safeRunLatest);
   });
   [event_types.MESSAGE_UPDATED, event_types.MESSAGE_SWIPED].filter(Boolean).forEach((type) => {
-    eventSource.on(type, safeRerunOne);
+    eventSource.on(type, safeRunOne);
   });
   [event_types.CHAT_CHANGED, event_types.MORE_MESSAGES_LOADED].filter(Boolean).forEach((type) => {
     eventSource.on(type, safeCached);

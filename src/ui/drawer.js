@@ -1,7 +1,7 @@
 import { LANGS, t, moduleDisplayName } from '../core/i18n.js';
 import { getSettings, updateModuleSettings, normalizeConnectionProfiles } from '../core/settings.js';
 import { renderAllMessages } from '../core/renderPipeline.js';
-import { resetModuleRunnerState, runAllEnabledPostGenerationModules } from '../core/moduleRunner.js';
+import { removeModuleFromCurrentMessage, rerenderTarotThemeOnly, runModuleForCurrentMessage } from '../core/moduleRunner.js';
 import { updateExtensionPrompt } from '../core/promptInjection.js';
 import { option, escapeHtml } from './controls.js';
 
@@ -57,34 +57,43 @@ export function renderDrawer(ctx) {
 
 function bindDrawer(ctx) {
   const $ = ctx.$ || window.jQuery;
-  const refreshActiveModules = () => {
-    resetModuleRunnerState();
+  const refreshModulePrompt = () => {
     updateExtensionPrompt(ctx);
-    renderAllMessages(ctx);
-    runAllEnabledPostGenerationModules(ctx).catch((error) => console.error('[RP Suite] settings-triggered module run failed:', error));
   };
   $('#rpsuite-root').off('.rpsuite');
   $('#rpsuite-root').on('change.rpsuite', '.rpsuite-enabled-toggle', function () {
     const moduleId = this.dataset.moduleId;
     updateModuleSettings(moduleId, { enabled: this.checked });
     ctx.registry.syncModule(moduleId);
-    refreshActiveModules();
-    if (moduleId === 'html_creator' && this.checked) ctx.registry.getModule('html_creator')?.wireAll?.(ctx.registry.getModuleContext('html_creator'));
+    refreshModulePrompt();
+    if (this.checked) {
+      runModuleForCurrentMessage(ctx, moduleId, { force: false }).catch((error) => console.error('[RP Suite] module enable render/generate failed:', error));
+      if (moduleId === 'html_creator') ctx.registry.getModule('html_creator')?.wireAll?.(ctx.registry.getModuleContext('html_creator'));
+    } else {
+      removeModuleFromCurrentMessage(ctx, moduleId);
+    }
     renderDrawer(ctx);
   });
   $('#rpsuite-root').on('change.rpsuite', '.rpsuite-lang-select', function () {
-    updateModuleSettings(this.dataset.moduleId, { lang: this.value });
-    refreshActiveModules();
+    const moduleId = this.dataset.moduleId;
+    updateModuleSettings(moduleId, { lang: this.value });
+    refreshModulePrompt();
+    runModuleForCurrentMessage(ctx, moduleId, { force: true }).catch((error) => console.error('[RP Suite] language-triggered module rerun failed:', error));
     renderDrawer(ctx);
   });
   $('#rpsuite-root').on('change.rpsuite', '.rpsuite-profile-select', function () {
-    updateModuleSettings(this.dataset.moduleId, { connectionProfile: this.value });
-    refreshActiveModules();
+    const moduleId = this.dataset.moduleId;
+    updateModuleSettings(moduleId, { connectionProfile: this.value });
+    refreshModulePrompt();
+    runModuleForCurrentMessage(ctx, moduleId, { force: true }).catch((error) => console.error('[RP Suite] profile-triggered module rerun failed:', error));
     renderDrawer(ctx);
   });
   $('#rpsuite-root').on('change.rpsuite', '.rpsuite-deck-select', function () {
     updateModuleSettings('tarot', { deckStyle: this.value });
-    refreshActiveModules();
+    refreshModulePrompt();
+    if (!rerenderTarotThemeOnly(ctx)) {
+      runModuleForCurrentMessage(ctx, 'tarot', { force: false }).catch((error) => console.error('[RP Suite] tarot cached render/generate failed:', error));
+    }
     renderDrawer(ctx);
   });
 }

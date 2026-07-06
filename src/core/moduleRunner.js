@@ -1,6 +1,13 @@
 import { isModuleEnabled } from './settings.js';
-import { getMessageId, renderModuleResults } from './renderPipeline.js';
-import { getCurrentChatIdSafe, getModuleState, setModuleState } from './moduleState.js';
+import { getMessageId, removeModuleResult, renderModuleResults } from './renderPipeline.js';
+import {
+  getCurrentChatIdSafe,
+  getMessageRenderKey,
+  getModuleMessageData,
+  getModuleState,
+  setModuleState,
+  updateModuleState,
+} from './moduleState.js';
 
 const messageStates = new Map();
 const RECENT_CONTEXT_LIMIT = 5;
@@ -98,6 +105,7 @@ async function runModuleGeneration(mod, $mes, ctx, messageId, messageText) {
   console.log(`[RP Suite] previous state for ${mod.id}:`, previousState);
   const moduleCtx = getModuleContext(ctx, mod, $mes, messageId, messageText, {
     chatId,
+    messageKey: messageId,
     previousState,
     moduleState: previousState,
   });
@@ -117,14 +125,91 @@ async function runModuleGeneration(mod, $mes, ctx, messageId, messageText) {
   let nextState = previousState;
   if (parsed && typeof mod.updateState === 'function') {
     nextState = mod.updateState(clone(previousState), parsed, moduleCtx);
+    if (previousState && nextState && typeof nextState === 'object') {
+      if (previousState.byMessage && !nextState.byMessage) nextState.byMessage = previousState.byMessage;
+      if (previousState.sections && !nextState.sections) nextState.sections = previousState.sections;
+      if (previousState.ui && !nextState.ui) nextState.ui = previousState.ui;
+    }
     console.log(`[RP Suite] updated state for ${mod.id}:`, nextState);
     setModuleState(chatId, mod.id, nextState);
+    persistModuleMessageResult(chatId, mod, messageId, { raw, parsed, stateBefore: previousState, stateAfter: nextState });
     console.log(`[RP Suite] saved state for ${mod.id}`);
+  } else if (parsed) {
+    persistModuleMessageResult(chatId, mod, messageId, { raw, parsed, stateBefore: previousState, stateAfter: previousState });
   }
   const renderCtx = { ...moduleCtx, previousState, moduleState: nextState, currentState: nextState };
   const html = parsed && mod.render && mod.renderMode !== 'floating' ? mod.render(parsed, renderCtx) : '';
   if (html || parsed) console.log(`[RP Suite] module ${mod.id} rendered`);
   return { id: mod.id, order: mod.renderOrder, raw, parsed, html, state: nextState };
+}
+
+function persistModuleMessageResult(chatId, mod, messageKey, entry = {}) {
+  updateModuleState(chatId, mod.id, (previous) => {
+    const ts = Date.now();
+    if (mod.id === 'comments') {
+      previous.sections = previous.sections || {};
+      previous.sections[messageKey] = {
+        ...(previous.sections[messageKey] || {}),
+        generatedComments: Array.isArray(entry.parsed) ? entry.parsed : (previous.sections[messageKey]?.generatedComments || []),
+        likes: previous.sections[messageKey]?.likes || {},
+        replies: previous.sections[messageKey]?.replies || [],
+        authorReplies: previous.sections[messageKey]?.authorReplies || [],
+        raw: entry.raw || '',
+        ts,
+      };
+      return previous;
+    }
+    const payload = {
+      parsed: entry.parsed || null,
+      stateBefore: entry.stateBefore || null,
+      stateAfter: entry.stateAfter || null,
+      raw: entry.raw || '',
+      ts,
+    };
+    if (mod.id === 'html_creator') {
+      payload.rawHtml = extractRsArt(entry.raw || '') || entry.parsed?.raw || '';
+      payload.sanitizedHtml = payload.rawHtml;
+    }
+    previous.byMessage = { ...(previous.byMessage || {}), [messageKey]: payload };
+    return previous;
+  });
+}
+
+function buildCachedRenderItem(mod, $mes, ctx, messageKey, messageText) {
+  const chatId = getCurrentChatIdSafe(ctx);
+  const storedState = getModuleState(chatId, mod.id) || null;
+  const cached = getModuleMessageData(chatId, mod.id, messageKey);
+  if (!cached) return null;
+  const parsed = mod.id === 'comments' ? (cached.generatedComments || []) : (cached.parsed || cached);
+  const stateAfter = mod.id === 'comments'
+    ? { ...(storedState || {}), sections: { ...(storedState?.sections || {}), [messageKey]: cached } }
+    : (cached.stateAfter || storedState);
+  const moduleCtx = getModuleContext(ctx, mod, $mes, messageKey, messageText, {
+    chatId,
+    messageKey,
+    previousState: storedState,
+    moduleState: stateAfter,
+    currentState: stateAfter,
+  });
+  const html = mod.render && mod.renderMode !== 'floating' && mod.renderMode !== 'inline-html-wire'
+    ? mod.render(parsed, moduleCtx)
+    : '';
+  console.log('[RP Suite] render cached module data', { moduleId: mod.id, messageKey });
+  return { id: mod.id, order: mod.renderOrder, raw: cached.raw || '', parsed, html, state: stateAfter, cached: true, rawHtml: cached.rawHtml };
+}
+
+function getCurrentAssistantMessage(ctx) {
+  const $ = get$fromCtx(ctx);
+  return $('.mes').filter((_, mes) => isAssistantMessage($(mes))).last();
+}
+
+function collectBlockResultsFromCache($mes, ctx, messageKey, messageText) {
+  const results = [];
+  for (const mod of getEnabledMessageBlockModules(ctx)) {
+    const item = buildCachedRenderItem(mod, $mes, ctx, messageKey, messageText);
+    if (item?.html) results.push(item);
+  }
+  return results;
 }
 
 function getEnabledMessageBlockModules(ctx) {
@@ -163,6 +248,13 @@ async function runHtmlCreatorForMessage($mes, ctx, messageId, messageText) {
   const mod = ctx.registry.getModule('html_creator');
   if (!mod || !isModuleEnabled('html_creator') || typeof mod.buildPrompt !== 'function') return null;
   try {
+    if (!ctx.forceModule && !ctx.forceAll) {
+      const cached = buildCachedRenderItem(mod, $mes, ctx, messageId, messageText);
+      if (cached?.rawHtml) {
+        insertHtmlCreatorRaw($mes, ctx, cached.rawHtml);
+        return { ...cached, html: cached.rawHtml };
+      }
+    }
     const item = await runModuleGeneration(mod, $mes, ctx, messageId, messageText);
     const rawHtml = extractRsArt(item.raw);
     if (!rawHtml) return item;
@@ -179,6 +271,20 @@ async function runFloatingModulesForMessage($mes, ctx, messageId, messageText) {
   const results = [];
   for (const mod of floating) {
     try {
+      if (!ctx.forceModule && !ctx.forceAll) {
+        const cached = buildCachedRenderItem(mod, $mes, ctx, messageId, messageText);
+        if (cached) {
+          if (cached.state && mod.render) mod.render(cached.parsed, getModuleContext(ctx, mod, $mes, messageId, messageText, {
+            chatId: getCurrentChatIdSafe(ctx),
+            messageKey: messageId,
+            previousState: cached.state,
+            moduleState: cached.state,
+            currentState: cached.state,
+          }));
+          results.push(cached);
+          continue;
+        }
+      }
       const item = await runModuleGeneration(mod, $mes, ctx, messageId, messageText);
       if (item.parsed && mod.render) {
         mod.render(item.parsed, getModuleContext(ctx, mod, $mes, messageId, messageText, {
@@ -207,11 +313,15 @@ export function resetModuleRunnerState(messageId = null) {
 
 export async function runModulesForMessage($mes, ctx, options = {}) {
   if (!$mes?.length || !ctx?.registry || !isAssistantMessage($mes)) return [];
-  const messageId = String(getMessageId($mes));
+  const messageText = getVisibleMessageText($mes);
+  if (!messageText) return [];
+  const messageId = getMessageRenderKey($mes, { ...ctx, messageText });
+  const forceAll = !!options.force && !options.moduleId;
   const existing = messageStates.get(messageId);
   if (existing?.running && !options.force) return existing.promise;
-  if (existing?.generated && !options.force) {
-    renderModuleResults($mes, existing.results || [], ctx);
+  if (existing?.generated && !options.force && !options.moduleId) {
+    const cachedResults = collectBlockResultsFromCache($mes, ctx, messageId, messageText);
+    renderModuleResults($mes, cachedResults, ctx);
     const htmlCreator = ctx.registry.getModule('html_creator');
     if (htmlCreator && isModuleEnabled('html_creator')) {
       if (existing.htmlCreator?.html) insertHtmlCreatorRaw($mes, ctx, existing.htmlCreator.html);
@@ -219,18 +329,22 @@ export async function runModulesForMessage($mes, ctx, options = {}) {
     } else {
       removeGeneratedHtml($mes);
     }
-    return existing.results || [];
+    return cachedResults;
   }
 
   const promise = (async () => {
-    const messageText = getVisibleMessageText($mes);
-    if (!messageText) return [];
     if (options.force) removeGeneratedHtml($mes);
 
     const blockResults = [];
     for (const mod of getEnabledMessageBlockModules(ctx)) {
+      if (options.moduleId && mod.id !== options.moduleId) {
+        const cached = buildCachedRenderItem(mod, $mes, ctx, messageId, messageText);
+        if (cached?.html) blockResults.push(cached);
+        continue;
+      }
       try {
-        const item = await runModuleGeneration(mod, $mes, ctx, messageId, messageText);
+        const cached = !forceAll && !options.forceModule ? buildCachedRenderItem(mod, $mes, ctx, messageId, messageText) : null;
+        const item = cached || await runModuleGeneration(mod, $mes, ctx, messageId, messageText);
         if (item.html) blockResults.push(item);
       } catch (error) {
         console.error(`[RP Suite] module ${mod.id} failed:`, error);
@@ -238,8 +352,13 @@ export async function runModulesForMessage($mes, ctx, options = {}) {
     }
 
     renderModuleResults($mes, blockResults, ctx);
-    const floatingResults = await runFloatingModulesForMessage($mes, ctx, messageId, messageText);
-    const htmlCreator = await runHtmlCreatorForMessage($mes, ctx, messageId, messageText);
+    const moduleCtxFlags = { ...ctx, forceAll, forceModule: !!options.forceModule };
+    const floatingResults = options.moduleId && ctx.registry.getModule(options.moduleId)?.renderMode !== 'floating'
+      ? []
+      : await runFloatingModulesForMessage($mes, moduleCtxFlags, messageId, messageText);
+    const htmlCreator = options.moduleId && options.moduleId !== 'html_creator'
+      ? null
+      : await runHtmlCreatorForMessage($mes, moduleCtxFlags, messageId, messageText);
 
     messageStates.set(messageId, { generated: true, running: false, results: blockResults, floatingResults, htmlCreator });
     return blockResults;
@@ -254,6 +373,40 @@ export async function runModulesForMessage($mes, ctx, options = {}) {
   }
 }
 
+export async function runModuleForCurrentMessage(ctx, moduleId, options = {}) {
+  const $mes = getCurrentAssistantMessage(ctx);
+  if (!$mes.length) return [];
+  const mod = ctx.registry.getModule(moduleId);
+  if (!mod) return [];
+  if (!isModuleEnabled(moduleId)) {
+    removeModuleResult($mes, moduleId, ctx);
+    if (moduleId === 'html_creator') removeGeneratedHtml($mes);
+    return [];
+  }
+  return runModulesForMessage($mes, ctx, { moduleId, force: !!options.force, forceModule: !!options.force });
+}
+
+export function removeModuleFromCurrentMessage(ctx, moduleId) {
+  const $mes = getCurrentAssistantMessage(ctx);
+  if (!$mes.length) return;
+  removeModuleResult($mes, moduleId, ctx);
+  if (moduleId === 'html_creator') removeGeneratedHtml($mes);
+}
+
+export function rerenderTarotThemeOnly(ctx) {
+  const $mes = getCurrentAssistantMessage(ctx);
+  if (!$mes.length) return false;
+  const messageText = getVisibleMessageText($mes);
+  const messageKey = getMessageRenderKey($mes, { ...ctx, messageText });
+  const mod = ctx.registry.getModule('tarot');
+  const item = mod && buildCachedRenderItem(mod, $mes, ctx, messageKey, messageText);
+  if (!item?.html) return false;
+  const existing = collectBlockResultsFromCache($mes, ctx, messageKey, messageText).filter((r) => r.id !== 'tarot');
+  renderModuleResults($mes, [...existing, item], ctx);
+  console.log('[RP Suite][Tarot] theme changed, rerender only, no generation');
+  return true;
+}
+
 export async function runAllEnabledPostGenerationModules(ctx) {
   const $ = get$fromCtx(ctx);
   const $messages = $('.mes').filter((_, mes) => isAssistantMessage($(mes)));
@@ -266,10 +419,12 @@ export function rerenderCachedModuleResults(ctx) {
   const $ = get$fromCtx(ctx);
   $('.mes').each((_, mes) => {
     const $mes = $(mes);
-    const state = messageStates.get(String(getMessageId($mes)));
-    if (state?.generated) {
-      renderModuleResults($mes, state.results || [], ctx);
-      if (isModuleEnabled('html_creator') && state.htmlCreator?.html) insertHtmlCreatorRaw($mes, ctx, state.htmlCreator.html);
-    }
+    const messageText = getVisibleMessageText($mes);
+    const messageKey = getMessageRenderKey($mes, { ...ctx, messageText });
+    const results = collectBlockResultsFromCache($mes, ctx, messageKey, messageText);
+    if (results.length) renderModuleResults($mes, results, ctx);
+    const htmlCreator = ctx.registry.getModule('html_creator');
+    const htmlCached = htmlCreator && buildCachedRenderItem(htmlCreator, $mes, ctx, messageKey, messageText);
+    if (isModuleEnabled('html_creator') && htmlCached?.rawHtml) insertHtmlCreatorRaw($mes, ctx, htmlCached.rawHtml);
   });
 }

@@ -87,7 +87,8 @@ export const ApiService = {
 
     const runFallback = async () => {
       if (!ctx.generateQuietPrompt) throw new Error('No SillyTavern generation method available');
-      const fallbackResponse = await ctx.generateQuietPrompt(prompt, false, false);
+      const fallbackPrompt = `${prompt}\n\n[CRITICAL FALLBACK MODE: Return ONLY the hidden module block required by the SYSTEM prompt. Do not write prose, markdown explanations, or any extra text. Preserve the exact wrapper tag and JSON/HTML format.]`;
+      const fallbackResponse = await ctx.generateQuietPrompt(fallbackPrompt, false, false);
       return { response: fallbackResponse, text: extractText(fallbackResponse) };
     };
 

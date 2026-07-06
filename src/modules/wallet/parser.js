@@ -16,5 +16,6 @@ export function parse(messageText) {
   if (Object.prototype.hasOwnProperty.call(data, 'note')) parsed.note = data.note || '';
   if (Object.prototype.hasOwnProperty.call(data, 'transactions')) parsed.transactions = Array.isArray(data.transactions) ? data.transactions : [];
   if (Object.prototype.hasOwnProperty.call(data, 'log')) parsed.log = Array.isArray(data.log) ? data.log : [];
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'transactions')) parsed.transactions = [];
   return parsed;
 }

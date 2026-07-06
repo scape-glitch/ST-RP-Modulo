@@ -1,5 +1,5 @@
 import { cleanHiddenJSONText } from './jsonRepair.js';
-import { getCurrentChatIdSafe, getModuleState } from './moduleState.js';
+import { getCurrentChatIdSafe, getMessageRenderKey, getModuleState } from './moduleState.js';
 
 export function getMessageId($mes) {
   return $mes.attr('mesid') || $mes.data('mesid') || $mes.attr('id') || String($mes.index());
@@ -43,9 +43,20 @@ export function renderModuleResults($mes, results = [], ctx = {}) {
   return $container;
 }
 
+export function removeModuleResult($mes, moduleId, ctx = {}) {
+  const $ = ctx.$ || window.jQuery;
+  if (!$mes?.length) return;
+  $mes.find(`.rpsuite-message-blocks [data-rpsuite-module="${moduleId}"]`).remove();
+  $mes.find(`.rpsuite-html-creator-generated[data-rpsuite-module="${moduleId}"]`).remove();
+  const $container = $mes.find('.rpsuite-message-blocks').first();
+  if ($container.length && !$container.children().length) $container.remove();
+}
+
 function getStateForMessage(storedState, moduleId, messageId) {
   if (!storedState) return null;
   if (moduleId === 'comments') return storedState.sections?.[String(messageId)] ? storedState : null;
+  const byMessage = storedState.byMessage?.[String(messageId)];
+  if (byMessage) return byMessage.stateAfter || { ...storedState, current: byMessage.parsed || byMessage };
   const entry = Array.isArray(storedState.history)
     ? storedState.history.find((item) => String(item.messageId) === String(messageId))
     : null;
@@ -63,13 +74,15 @@ export function renderMessageModules($mes, ctx) {
     if (mod.renderMode !== 'message-block') continue;
     const mctx = ctx.registry.getModuleContext(mod.id);
     const parsed = mod.parse?.(messageText, mctx);
-    const messageId = getMessageId($mes);
+    const messageId = getMessageRenderKey($mes, { ...ctx, messageText });
     const chatId = getCurrentChatIdSafe(ctx);
     const storedState = getModuleState(chatId, mod.id);
     const stateForMessage = getStateForMessage(storedState, mod.id, messageId);
+    const cached = mod.id === 'comments' ? storedState?.sections?.[messageId] : storedState?.byMessage?.[messageId];
+    const cachedParsed = mod.id === 'comments' ? cached?.generatedComments : cached?.parsed;
     const renderCtx = { ...mctx, chatId, messageId, previousState: storedState, moduleState: stateForMessage || storedState, currentState: stateForMessage };
     if (!parsed && !stateForMessage) continue;
-    const html = mod.render?.(parsed, renderCtx);
+    const html = mod.render?.(parsed || cachedParsed, renderCtx);
     if (!html) continue;
     results.push({ id: mod.id, order: mod.renderOrder, html });
   }

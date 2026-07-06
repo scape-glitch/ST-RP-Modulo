@@ -30,6 +30,15 @@ function clampPosition(left, top, width, height) {
 }
 
 function readStoredPosition() {
+  try {
+    const chatId = getCurrentChatIdSafe({});
+    const uiPos = getModuleState(chatId, 'wallet')?.ui?.position;
+    if (uiPos) {
+      const left = numberFromCss(uiPos.left);
+      const top = numberFromCss(uiPos.top);
+      if (left !== null && top !== null) return { left, top };
+    }
+  } catch (_) {}
   const stored = localStore(POS_KEY, null) || localStore(LEGACY_POS_KEY, null);
   if (!stored) return null;
   const left = numberFromCss(stored.left);
@@ -49,7 +58,17 @@ function applyStoredPosition($w) {
   const clamped = clampPosition(stored.left, stored.top, width, height);
   $w.css({ left: `${Math.round(clamped.left)}px`, top: `${Math.round(clamped.top)}px`, right: 'auto', bottom: 'auto' });
   setLocalStore(POS_KEY, { left: Math.round(clamped.left), top: Math.round(clamped.top) });
+  persistWalletUi({}, { position: { left: Math.round(clamped.left), top: Math.round(clamped.top) } });
   console.log('[RP Suite][Wallet] restored position', { left: Math.round(clamped.left), top: Math.round(clamped.top) });
+}
+
+function persistWalletUi(ctx = {}, patch = {}) {
+  try {
+    const chatId = getCurrentChatIdSafe(ctx);
+    const state = getModuleState(chatId, 'wallet') || getDefaultState();
+    state.ui = { ...(state.ui || {}), ...patch };
+    setModuleState(chatId, 'wallet', state);
+  } catch (_) {}
 }
 
 function saveWidgetPosition($w) {
@@ -57,6 +76,7 @@ function saveWidgetPosition($w) {
   if (!rect) return null;
   const position = { left: Math.round(rect.left), top: Math.round(rect.top) };
   setLocalStore(POS_KEY, position);
+  persistWalletUi({}, { position });
   return position;
 }
 
@@ -66,6 +86,7 @@ function clampCurrentPosition($w) {
   const clamped = clampPosition(rect.left, rect.top, rect.width || $w.outerWidth() || 40, rect.height || $w.outerHeight() || 40);
   $w.css({ left: `${Math.round(clamped.left)}px`, top: `${Math.round(clamped.top)}px`, right: 'auto', bottom: 'auto' });
   setLocalStore(POS_KEY, { left: Math.round(clamped.left), top: Math.round(clamped.top) });
+  persistWalletUi({}, { position: { left: Math.round(clamped.left), top: Math.round(clamped.top) } });
 }
 
 export { buildPrompt, parse };
@@ -245,6 +266,7 @@ function ensureWidget(ctx) {
     const $container = $w.find(`.${PFX}-container`);
     $container.toggleClass('collapsed');
     if ($container.hasClass('collapsed')) $container.find(`.${PFX}-balance-flip-container`).removeClass('flipped');
+    persistWalletUi(ctx, { collapsed: $container.hasClass('collapsed') });
     console.log('[RP Suite][Wallet] collapsed:', $container.hasClass('collapsed'));
     requestAnimationFrame(() => clampCurrentPosition($w));
   });
@@ -350,7 +372,8 @@ export function render(data, ctx) {
   const state = normalizeWallet(ctx?.currentState?.current || data || {});
   const $w = ensureWidget(ctx);
   const lang = ctx.lang || 'ru';
-  const wasCollapsed = !$w.find(`.${PFX}-container`).length || $w.find(`.${PFX}-container`).hasClass('collapsed');
+  const storedCollapsed = getModuleState(getCurrentChatIdSafe(ctx), 'wallet')?.ui?.collapsed;
+  const wasCollapsed = storedCollapsed ?? (!$w.find(`.${PFX}-container`).length || $w.find(`.${PFX}-container`).hasClass('collapsed'));
   $w.html(buildFullWidget(state, lang));
   if (!wasCollapsed) $w.find(`.${PFX}-container`).removeClass('collapsed');
   applyStoredPosition($w);
