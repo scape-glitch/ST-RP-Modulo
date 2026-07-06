@@ -1,5 +1,3 @@
-import { proxies, chat_completion_sources } from '../../../../../openai.js';
-import { getEventSourceStream } from '../../../../../sse-stream.js';
 import { getModuleSettings } from './settings.js';
 
 const abortControllers = new Map();
@@ -13,6 +11,32 @@ function getFirstText(value) {
   if (typeof value === 'string') return value;
   if (Array.isArray(value)) return value.map((item) => item?.text || item?.content || '').join('');
   return value.text || value.content || '';
+}
+
+function messagesToPrompt(messages = []) {
+  return messages.map((message) => {
+    const role = String(message?.role || 'user').toUpperCase();
+    return `[${role}]\n${getFirstText(message?.content)}`;
+  }).join('\n\n');
+}
+
+function extractText(response) {
+  if (typeof response === 'string') return response;
+  if (response && typeof response.content === 'string') return response.content;
+  if (response?.choices?.[0]?.message?.content) return getFirstText(response.choices[0].message.content);
+  if (response?.choices?.[0]?.text) return response.choices[0].text;
+  if (response?.text) return getFirstText(response.text);
+  return '';
+}
+
+function getProfileId(profile) {
+  return profile?.id || profile?.identifier || profile?.name || '';
+}
+
+function findConnectionProfile(profiles = [], selected = '') {
+  const value = String(selected || '').trim();
+  if (!value || value === '__current__') return null;
+  return profiles.find((profile) => String(profile?.id || '') === value || String(profile?.identifier || '') === value || profile?.name === value) || null;
 }
 
 export const ApiService = {
@@ -33,59 +57,6 @@ export const ApiService = {
     return this.getConnectionProfile(profileName)?.model || '';
   },
 
-  getChatCompletionSource(apiName) {
-    const raw = String(apiName || '').trim();
-    if (!raw) return getContext().chatCompletionSettings?.chat_completion_source;
-    const key = raw.toUpperCase() === 'GOOGLE' ? 'MAKERSUITE' : raw.toUpperCase();
-    return chat_completion_sources?.[key] || raw;
-  },
-
-  applyConnectionProfileData(generateData, connectionProfile, ccSource) {
-    if (!connectionProfile) return generateData;
-    generateData.chat_completion_source = ccSource;
-    generateData.model = connectionProfile.model || generateData.model;
-    generateData.api = connectionProfile.api || generateData.api;
-
-    if (connectionProfile['secret-id']) generateData.secret_id = connectionProfile['secret-id'];
-
-    if (ccSource === chat_completion_sources?.CUSTOM || String(connectionProfile.api).toUpperCase() === 'CUSTOM') {
-      generateData.custom_url = this.normalizeApiUrl(connectionProfile.custom_url || connectionProfile.api_url || '');
-      generateData.custom_prompt_post_processing = connectionProfile.custom_prompt_post_processing;
-      generateData.custom_include_body = connectionProfile.custom_include_body;
-      generateData.custom_exclude_body = connectionProfile.custom_exclude_body;
-      generateData.custom_include_headers = connectionProfile.custom_include_headers;
-    }
-
-    if (ccSource === chat_completion_sources?.VERTEXAI || String(connectionProfile.api).toUpperCase() === 'VERTEXAI') {
-      generateData.vertexai_region = connectionProfile.vertexai_region;
-      generateData.vertexai_auth_mode = connectionProfile.vertexai_auth_mode;
-      generateData.vertexai_express_project_id = connectionProfile.vertexai_express_project_id;
-    }
-
-    if (ccSource === chat_completion_sources?.ZAI || String(connectionProfile.api).toUpperCase() === 'ZAI') {
-      generateData.zai_endpoint = connectionProfile.zai_endpoint;
-    }
-
-    if (connectionProfile.proxy && ccSource !== chat_completion_sources?.OPENROUTER) {
-      const proxy = proxies?.find?.((p) => p.name === connectionProfile.proxy);
-      if (proxy) {
-        generateData.reverse_proxy = proxy.url;
-        generateData.proxy_password = proxy.password;
-      }
-    }
-
-    return generateData;
-  },
-
-  async getStreamingReply(response, ccSource) {
-    let text = '';
-    for await (const event of getEventSourceStream(response)) {
-      const data = typeof event === 'string' ? JSON.parse(event) : event?.data ? JSON.parse(event.data) : event;
-      text += this.extractMessageFromData(data, { chat_completion_source: ccSource });
-    }
-    return text;
-  },
-
   async readResponseError(response) {
     try {
       const data = await response.json();
@@ -97,36 +68,56 @@ export const ApiService = {
 
   async generateWithModuleProfile({ messages, moduleId, settingsOverride = {} }) {
     const ctx = getContext();
-    const { getRequestHeaders, chatCompletionSettings = {} } = ctx;
     const moduleSettings = { ...(getModuleSettings(moduleId) || {}), ...settingsOverride };
-    const profile = this.getConnectionProfile(moduleSettings.connectionProfile);
-    const ccSource = this.getChatCompletionSource(profile?.api || chatCompletionSettings.chat_completion_source);
-    const stream = settingsOverride.stream ?? false;
+    const profiles = ctx.extensionSettings?.connectionManager?.profiles || [];
+    const selectedProfile = findConnectionProfile(profiles, moduleSettings.connectionProfile);
+    const selectedProfileId = getProfileId(selectedProfile);
+    const profileName = selectedProfile?.name || '';
+    const model = selectedProfile?.model || '';
+    const maxTokens = settingsOverride.max_tokens ?? moduleSettings.max_tokens ?? 1000;
+    const prompt = messagesToPrompt(messages);
 
-    this.abortGeneration(moduleId);
-    const controller = new AbortController();
-    abortControllers.set(moduleId, controller);
-
-    const generateData = this.applyConnectionProfileData({
-      messages,
-      stream,
-      temperature: settingsOverride.temperature ?? 0.7,
-      top_p: settingsOverride.top_p ?? 1.0,
-      max_tokens: settingsOverride.max_tokens ?? 1000,
-      reasoning_effort: settingsOverride.reasoning_effort,
-    }, profile, ccSource);
-
-    const response = await fetch('/api/backends/chat-completions/generate', {
-      method: 'POST',
-      headers: getRequestHeaders ? getRequestHeaders() : { 'Content-Type': 'application/json' },
-      body: JSON.stringify(generateData),
-      signal: controller.signal,
+    console.log('[RP Suite] API via ConnectionManagerRequestService', {
+      moduleId,
+      profileId: selectedProfileId,
+      profileName,
+      model,
+      maxTokens,
     });
 
-    if (!response.ok) throw new Error(await this.readResponseError(response));
-    if (stream) return { text: await this.getStreamingReply(response, ccSource), profile, model: profile?.model || '' };
-    const data = await response.json();
-    return { data, text: this.extractMessageFromData(data, { chat_completion_source: ccSource }), profile, model: profile?.model || '' };
+    const runFallback = async () => {
+      if (!ctx.generateQuietPrompt) throw new Error('No SillyTavern generation method available');
+      const fallbackResponse = await ctx.generateQuietPrompt(prompt, false, false);
+      return { response: fallbackResponse, text: extractText(fallbackResponse) };
+    };
+
+    let response;
+    let text;
+    if (selectedProfileId && ctx.ConnectionManagerRequestService?.sendRequest) {
+      try {
+        response = await ctx.ConnectionManagerRequestService.sendRequest(selectedProfileId, prompt, maxTokens);
+        text = extractText(response);
+      } catch (error) {
+        console.warn('[RP Suite] Connection profile failed, fallback to generateQuietPrompt', error);
+        const fallback = await runFallback();
+        response = fallback.response;
+        text = fallback.text;
+      }
+    } else {
+      if (moduleSettings.connectionProfile && moduleSettings.connectionProfile !== '__current__') {
+        console.warn('[RP Suite] Connection profile not found, fallback to generateQuietPrompt', moduleSettings.connectionProfile);
+      }
+      const fallback = await runFallback();
+      response = fallback.response;
+      text = fallback.text;
+    }
+
+    return {
+      text,
+      raw: response,
+      profileName,
+      model,
+    };
   },
 
   extractMessageFromData(data) {
