@@ -1,4 +1,4 @@
 export function buildPrompt({ lang = 'ru' }) {
   const languageRule = lang === 'ru' ? 'All visible labels and insight text must be Russian.' : 'All visible labels and insight text must be English.';
-  return `[System Note: Track the emotional/relationship metrics for the current roleplay scene. At the very end of your response output ONLY a valid JSON object inside <rs_metrics> tags, with JSON inside an HTML comment: <rs_metrics><!-- {"arousal":0,"grudge":0,"respect":50,"relationship":"...","intention":"...","insight":"..."} --></rs_metrics>. Values arousal/grudge/respect are integers 0-100. Do not mention the hidden block in normal prose. ${languageRule}]`;
+  return `[System Note: Track the emotional/relationship metrics for the current roleplay scene. At the very end of your response output ONLY this XML/HTML block with valid JSON inside an HTML comment: <rs_metrics><!-- {"arousal":0,"grudge":0,"respect":0,"relationship":"","intention":"","insight":""} --></rs_metrics>. Values arousal/grudge/respect are integers 0-100. Do not mention the hidden block in normal prose. ${languageRule}]`;
 }
