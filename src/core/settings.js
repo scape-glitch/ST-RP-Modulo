@@ -12,6 +12,15 @@ export const DEFAULT_MODULE_SETTINGS = Object.freeze({
   html_creator: { enabled: true, lang: 'ru', connectionProfile: '' },
 });
 
+export const MODULE_MAX_TOKENS = Object.freeze({
+  metrics: 1200,
+  tarot: 900,
+  comments: 3500,
+  infoblock: 1500,
+  wallet: 1600,
+  html_creator: 3500,
+});
+
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 export function getProfilesFromContext() {

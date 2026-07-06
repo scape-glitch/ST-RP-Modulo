@@ -1,4 +1,4 @@
-export function sanitizeForJSON(str) {
+﻿export function sanitizeForJSON(str) {
   return String(str || '')
     .replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, '')
     .replace(/[\u00A0\u1680\u180E\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\u3164]/g, ' ')
@@ -22,7 +22,21 @@ export function normalizeHiddenTagName(text, expectedTagName) {
   const tag = escRe(expectedTagName);
   return String(text || '')
     .replace(new RegExp(`<\\s*${tag}\\b([^>]*)>`, 'ig'), `<${expectedTagName}$1>`)
-    .replace(new RegExp(`<\\s*/\\s*${tag}\\s*>`, 'ig'), `</${expectedTagName}>`);
+    .replace(new RegExp(`<\\s*\/\\s*${tag}\\s*>`, 'ig'), `</${expectedTagName}>`);
+}
+
+export function cleanModuleRawResponse(raw, expectedTagName) {
+  const value = String(raw || '');
+  if (!expectedTagName || !value) return value;
+  const tag = escRe(expectedTagName);
+  const openRe = new RegExp(`<\\s*${tag}\\b[^>]*>`, 'i');
+  const open = openRe.exec(value);
+  if (!open) return value;
+  const closeRe = new RegExp(`<\\s*\/\\s*${tag}\\s*>`, 'ig');
+  closeRe.lastIndex = open.index + open[0].length;
+  const close = closeRe.exec(value);
+  if (!close) return value;
+  return normalizeHiddenTagName(value.slice(open.index, close.index + close[0].length), expectedTagName).trim();
 }
 
 export function repairCommonJsonMistakes(text) {

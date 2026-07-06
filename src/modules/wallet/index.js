@@ -62,6 +62,25 @@ function applyStoredPosition($w) {
   console.log('[RP Suite][Wallet] restored position', { left: Math.round(clamped.left), top: Math.round(clamped.top) });
 }
 
+function readWalletUiState(ctx = {}, $w = null) {
+  const stored = getModuleState(getCurrentChatIdSafe(ctx), 'wallet')?.ui || {};
+  const hasStoredCollapsed = typeof stored.collapsed === 'boolean';
+  const domCollapsed = $w?.find?.(`.${PFX}-container`).length ? $w.find(`.${PFX}-container`).hasClass('collapsed') : true;
+  return {
+    collapsed: hasStoredCollapsed ? stored.collapsed : domCollapsed,
+    position: stored.position || readStoredPosition() || null,
+  };
+}
+
+function applyWalletUiState($w, uiState = {}) {
+  const $container = $w.find(`.${PFX}-container`);
+  const collapsed = uiState.collapsed !== false;
+  $container.toggleClass('collapsed', collapsed);
+  if (collapsed) $container.find(`.${PFX}-balance-flip-container`).removeClass('flipped');
+  applyStoredPosition($w);
+  console.log('[RP Suite][Wallet] apply ui state', { collapsed, position: readStoredPosition() });
+}
+
 function persistWalletUi(ctx = {}, patch = {}) {
   try {
     const chatId = getCurrentChatIdSafe(ctx);
@@ -78,6 +97,27 @@ function saveWidgetPosition($w) {
   setLocalStore(POS_KEY, position);
   persistWalletUi({}, { position });
   return position;
+}
+
+function saveWalletUiState(ctx = {}, $w = null, patch = {}) {
+  const $container = $w?.find?.(`.${PFX}-container`);
+  const collapsed = $container?.length ? $container.hasClass('collapsed') : readWalletUiState(ctx, $w).collapsed;
+  const rect = $w?.[0]?.getBoundingClientRect?.();
+  const position = rect ? { left: Math.round(rect.left), top: Math.round(rect.top) } : readStoredPosition();
+  const ui = { collapsed, ...(position ? { position } : {}), ...patch };
+  persistWalletUi(ctx, ui);
+  if (ui.position) setLocalStore(POS_KEY, ui.position);
+  return ui;
+}
+
+function toggleWalletCollapsed(ctx = {}, $w) {
+  const $container = $w.find(`.${PFX}-container`);
+  const nextCollapsed = !$container.hasClass('collapsed');
+  $container.toggleClass('collapsed', nextCollapsed);
+  if (nextCollapsed) $container.find(`.${PFX}-balance-flip-container`).removeClass('flipped');
+  saveWalletUiState(ctx, $w, { collapsed: nextCollapsed });
+  console.log('[RP Suite][Wallet] toggle collapsed ->', nextCollapsed);
+  requestAnimationFrame(() => clampCurrentPosition($w));
 }
 
 function clampCurrentPosition($w) {
@@ -240,6 +280,7 @@ function ensureWidget(ctx) {
       suppressClickUntil = Date.now() + 350;
       const position = saveWidgetPosition($w);
       console.log('[RP Suite][Wallet] drag end', position);
+      console.log('[RP Suite][Wallet] drag suppressed click');
       if (e.cancelable) e.preventDefault();
     }
   }
@@ -261,14 +302,10 @@ function ensureWidget(ctx) {
     e.stopPropagation();
     if (Date.now() < suppressClickUntil) {
       e.preventDefault();
+      console.log('[RP Suite][Wallet] drag suppressed click');
       return;
     }
-    const $container = $w.find(`.${PFX}-container`);
-    $container.toggleClass('collapsed');
-    if ($container.hasClass('collapsed')) $container.find(`.${PFX}-balance-flip-container`).removeClass('flipped');
-    persistWalletUi(ctx, { collapsed: $container.hasClass('collapsed') });
-    console.log('[RP Suite][Wallet] collapsed:', $container.hasClass('collapsed'));
-    requestAnimationFrame(() => clampCurrentPosition($w));
+    toggleWalletCollapsed(ctx, $w);
   });
   $w.on('click.rpsuiteWallet', `[data-${PFX}-flip]`, (e) => {
     e.stopPropagation();
@@ -338,7 +375,9 @@ function buildFullWidget(wallet, lang) {
 function mutateWallet(ctx, mutator) {
   const chatId = getCurrentChatIdSafe(ctx);
   const state = getModuleState(chatId, 'wallet') || getDefaultState();
+  const ui = readWalletUiState(ctx, window.jQuery?.(`.${PFX}-global-container`).first());
   state.current = normalizeWallet(state.current || {});
+  state.ui = { ...(state.ui || {}), ...ui };
   mutator(state.current);
   setModuleState(chatId, 'wallet', state);
   render(state.current, ctx);
@@ -372,10 +411,8 @@ export function render(data, ctx) {
   const state = normalizeWallet(ctx?.currentState?.current || data || {});
   const $w = ensureWidget(ctx);
   const lang = ctx.lang || 'ru';
-  const storedCollapsed = getModuleState(getCurrentChatIdSafe(ctx), 'wallet')?.ui?.collapsed;
-  const wasCollapsed = storedCollapsed ?? (!$w.find(`.${PFX}-container`).length || $w.find(`.${PFX}-container`).hasClass('collapsed'));
+  const uiState = readWalletUiState(ctx, $w);
   $w.html(buildFullWidget(state, lang));
-  if (!wasCollapsed) $w.find(`.${PFX}-container`).removeClass('collapsed');
-  applyStoredPosition($w);
+  applyWalletUiState($w, uiState);
   return $w;
 }

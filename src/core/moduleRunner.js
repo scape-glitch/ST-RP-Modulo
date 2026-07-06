@@ -1,5 +1,6 @@
-import { isModuleEnabled } from './settings.js';
+import { isModuleEnabled, MODULE_MAX_TOKENS } from './settings.js';
 import { getMessageId, removeModuleResult, renderModuleResults } from './renderPipeline.js';
+import { cleanModuleRawResponse } from './jsonRepair.js';
 import {
   getCurrentChatIdSafe,
   getMessageRenderKey,
@@ -11,6 +12,22 @@ import {
 
 const messageStates = new Map();
 const RECENT_CONTEXT_LIMIT = 5;
+const MODULE_OUTPUT_TAGS = Object.freeze({
+  metrics: 'rs_metrics',
+  tarot: 'tarot_reading',
+  comments: 'social_comments',
+  infoblock: 'scene_state',
+  wallet: 'wallet_state',
+  html_creator: 'rs_art',
+});
+const MODULE_OUTPUT_EXAMPLES = Object.freeze({
+  metrics: '<rs_metrics><!-- JSON --></rs_metrics>',
+  tarot: '<tarot_reading><!-- JSON --></tarot_reading>',
+  comments: '<social_comments><!-- JSON --></social_comments>',
+  infoblock: '<scene_state><!-- JSON --></scene_state>',
+  wallet: '<wallet_state><!-- JSON --></wallet_state>',
+  html_creator: '<rs_art>RAW_HTML</rs_art>',
+});
 
 function get$fromCtx(ctx) {
   return ctx.$ || window.jQuery;
@@ -85,7 +102,42 @@ export function buildModuleUserPayload($mes, moduleCtx = {}) {
   const previous = moduleCtx.previousState !== undefined
     ? `\n\nPrevious persistent module state for ${moduleCtx.moduleId || 'module'}:\n\`\`\`json\n${formatStateForPrompt(moduleCtx.previousState)}\n\`\`\``
     : '';
-  return `Latest assistant message:\n"""\n${latest}\n"""\n\nRecent context:\n"""\n${recent || 'No recent context available.'}\n"""\n\nChat metadata:\n- Character: ${names.character || 'unknown'}\n- User: ${names.user || 'unknown'}\n- Chat: ${names.chat || 'unknown'}${previous}\n\nGenerate only the output block required by your system prompt.`;
+  return `Latest assistant message:\n"""\n${latest}\n"""\n\nRecent context:\n"""\n${recent || 'No recent context available.'}\n"""\n\nChat metadata:\n- Character: ${names.character || 'unknown'}\n- User: ${names.user || 'unknown'}\n- Chat: ${names.chat || 'unknown'}${previous}\n\nDo not continue the RP message. Do not write narrative text. Return only the module block. Generate only the output block required by your system prompt.`;
+}
+
+function wrapModuleSystemPrompt(moduleId, systemPrompt) {
+  const example = MODULE_OUTPUT_EXAMPLES[moduleId] || 'the required hidden module block';
+  return `SYSTEM OVERRIDE FOR MODULE GENERATION:
+You are not writing roleplay.
+You are not continuing the scene.
+You are not speaking as any character.
+You are generating machine-readable module data only.
+Output exactly one required hidden block and nothing else.
+No prose before it.
+No prose after it.
+No markdown outside the required hidden block.
+No explanations.
+
+Output only:
+${example}
+
+ORIGINAL MODULE PROMPT (source of truth for module logic):
+${systemPrompt}
+
+FINAL OUTPUT CONTRACT:
+Return exactly one ${example} block and nothing else.`;
+}
+
+function getModuleGenerationSettings(moduleCtx = {}) {
+  if (moduleCtx.moduleSettings && moduleCtx.moduleSettings.max_tokens !== undefined && moduleCtx.moduleSettings.max_tokens !== null) return {};
+  const max_tokens = MODULE_MAX_TOKENS[moduleCtx.moduleId];
+  return max_tokens ? { max_tokens } : {};
+}
+
+function hasExpectedModuleTag(raw, expectedTag) {
+  if (!expectedTag) return true;
+  const tag = String(expectedTag).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`<\\s*${tag}\\b[^>]*>[\\s\\S]*?<\\s*\/\\s*${tag}\\s*>`, 'i').test(String(raw || ''));
 }
 
 function getModuleContext(ctx, mod, $mes, messageId, messageText, extra = {}) {
@@ -112,15 +164,20 @@ async function runModuleGeneration(mod, $mes, ctx, messageId, messageText) {
   const systemPrompt = mod.buildPrompt?.(moduleCtx);
   if (!systemPrompt) return { id: mod.id, raw: '', parsed: null, html: '' };
   const messages = [
-    { role: 'system', content: systemPrompt },
+    { role: 'system', content: wrapModuleSystemPrompt(mod.id, systemPrompt) },
     { role: 'user', content: buildModuleUserPayload($mes, moduleCtx) },
   ];
 
   console.log(`[RP Suite] running module ${mod.id} for message ${messageId}`);
-  const result = await ctx.ApiService.generateWithModuleProfile({ moduleId: mod.id, messages });
+  const result = await ctx.ApiService.generateWithModuleProfile({ moduleId: mod.id, messages, settingsOverride: getModuleGenerationSettings(moduleCtx) });
   const raw = result?.text || '';
   console.log(`[RP Suite] module ${mod.id} raw response:`, raw);
-  const parsed = mod.parse?.(raw, moduleCtx) || null;
+  const expectedTag = MODULE_OUTPUT_TAGS[mod.id];
+  const cleanedRaw = cleanModuleRawResponse(raw, expectedTag);
+  if (expectedTag && cleanedRaw.trim() !== String(raw || '').trim()) console.warn('[RP Suite] module raw contained extra prose, stripped before parsing', { moduleId: mod.id, expectedTag });
+  const missingExpectedTag = expectedTag && !hasExpectedModuleTag(cleanedRaw, expectedTag);
+  if (missingExpectedTag) console.error(`[RP Suite] module ${mod.id} missing expected <${expectedTag}> block, not parsing raw prose`);
+  const parsed = missingExpectedTag ? null : (mod.parse?.(cleanedRaw, moduleCtx) || null);
   console.log(`[RP Suite] module ${mod.id} parsed:`, parsed);
   let nextState = previousState;
   if (parsed && typeof mod.updateState === 'function') {
@@ -132,15 +189,17 @@ async function runModuleGeneration(mod, $mes, ctx, messageId, messageText) {
     }
     console.log(`[RP Suite] updated state for ${mod.id}:`, nextState);
     setModuleState(chatId, mod.id, nextState);
-    persistModuleMessageResult(chatId, mod, messageId, { raw, parsed, stateBefore: previousState, stateAfter: nextState });
+    persistModuleMessageResult(chatId, mod, messageId, { raw: cleanedRaw, parsed, stateBefore: previousState, stateAfter: nextState });
     console.log(`[RP Suite] saved state for ${mod.id}`);
   } else if (parsed) {
-    persistModuleMessageResult(chatId, mod, messageId, { raw, parsed, stateBefore: previousState, stateAfter: previousState });
+    persistModuleMessageResult(chatId, mod, messageId, { raw: cleanedRaw, parsed, stateBefore: previousState, stateAfter: previousState });
+  } else {
+    console.error(`[RP Suite] module ${mod.id} parse failed, not caching broken response`);
   }
   const renderCtx = { ...moduleCtx, previousState, moduleState: nextState, currentState: nextState };
   const html = parsed && mod.render && mod.renderMode !== 'floating' ? mod.render(parsed, renderCtx) : '';
   if (html || parsed) console.log(`[RP Suite] module ${mod.id} rendered`);
-  return { id: mod.id, order: mod.renderOrder, raw, parsed, html, state: nextState };
+  return { id: mod.id, order: mod.renderOrder, raw: cleanedRaw, parsed, html, state: nextState, failed: !parsed };
 }
 
 function persistModuleMessageResult(chatId, mod, messageKey, entry = {}) {
@@ -181,6 +240,7 @@ function buildCachedRenderItem(mod, $mes, ctx, messageKey, messageText) {
   const cached = getModuleMessageData(chatId, mod.id, messageKey);
   if (!cached) return null;
   const parsed = mod.id === 'comments' ? (cached.generatedComments || []) : (cached.parsed || cached);
+  if (mod.id === 'comments' && !parsed.length) return null;
   const stateAfter = mod.id === 'comments'
     ? { ...(storedState || {}), sections: { ...(storedState?.sections || {}), [messageKey]: cached } }
     : (cached.stateAfter || storedState);
@@ -336,6 +396,7 @@ export async function runModulesForMessage($mes, ctx, options = {}) {
     if (options.force) removeGeneratedHtml($mes);
 
     const blockResults = [];
+    let hadModuleFailures = false;
     for (const mod of getEnabledMessageBlockModules(ctx)) {
       if (options.moduleId && mod.id !== options.moduleId) {
         const cached = buildCachedRenderItem(mod, $mes, ctx, messageId, messageText);
@@ -345,8 +406,10 @@ export async function runModulesForMessage($mes, ctx, options = {}) {
       try {
         const cached = !forceAll && !options.forceModule ? buildCachedRenderItem(mod, $mes, ctx, messageId, messageText) : null;
         const item = cached || await runModuleGeneration(mod, $mes, ctx, messageId, messageText);
+        if (item?.failed) hadModuleFailures = true;
         if (item.html) blockResults.push(item);
       } catch (error) {
+        hadModuleFailures = true;
         console.error(`[RP Suite] module ${mod.id} failed:`, error);
       }
     }
@@ -359,8 +422,9 @@ export async function runModulesForMessage($mes, ctx, options = {}) {
     const htmlCreator = options.moduleId && options.moduleId !== 'html_creator'
       ? null
       : await runHtmlCreatorForMessage($mes, moduleCtxFlags, messageId, messageText);
+    if (floatingResults.some((item) => item?.failed) || htmlCreator?.failed) hadModuleFailures = true;
 
-    messageStates.set(messageId, { generated: true, running: false, results: blockResults, floatingResults, htmlCreator });
+    messageStates.set(messageId, { generated: !hadModuleFailures, running: false, results: blockResults, floatingResults, htmlCreator });
     return blockResults;
   })();
 

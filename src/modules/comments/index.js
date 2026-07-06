@@ -154,10 +154,18 @@ function getAuthorFromState(ctx = {}) {
 function buildCommentTree(comments) {
   const tree = [];
   const map = new Map();
-  comments.forEach((c, idx) => map.set(idx, { ...c, _idx: idx, _children: [] }));
+  const idToIndex = new Map();
+  comments.forEach((c, idx) => {
+    map.set(idx, { ...c, _idx: idx, _children: [] });
+    idToIndex.set(String(c.id), idx);
+    idToIndex.set(String(c.username || '').replace(/^@/, ''), idx);
+  });
   comments.forEach((c, idx) => {
     const node = map.get(idx);
-    const parent = Number(c.is_reply_to);
+    let parent = Number(c.is_reply_to);
+    if (!Number.isFinite(parent) && c.is_reply_to !== null && c.is_reply_to !== undefined) {
+      parent = idToIndex.has(String(c.is_reply_to)) ? idToIndex.get(String(c.is_reply_to)) : NaN;
+    }
     if (Number.isFinite(parent) && parent >= 0 && parent !== idx && map.has(parent)) map.get(parent)._children.push(node);
     else tree.push(node);
   });

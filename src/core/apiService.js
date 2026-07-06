@@ -1,4 +1,4 @@
-import { getModuleSettings } from './settings.js';
+import { getModuleSettings, MODULE_MAX_TOKENS } from './settings.js';
 
 const abortControllers = new Map();
 
@@ -74,7 +74,7 @@ export const ApiService = {
     const selectedProfileId = getProfileId(selectedProfile);
     const profileName = selectedProfile?.name || '';
     const model = selectedProfile?.model || '';
-    const maxTokens = settingsOverride.max_tokens ?? moduleSettings.max_tokens ?? 1000;
+    const maxTokens = settingsOverride.max_tokens ?? moduleSettings.max_tokens ?? MODULE_MAX_TOKENS[moduleId] ?? 1000;
     const prompt = messagesToPrompt(messages);
 
     console.log('[RP Suite] API via ConnectionManagerRequestService', {
@@ -88,7 +88,12 @@ export const ApiService = {
     const runFallback = async () => {
       if (!ctx.generateQuietPrompt) throw new Error('No SillyTavern generation method available');
       const fallbackPrompt = `${prompt}\n\n[CRITICAL FALLBACK MODE: Return ONLY the hidden module block required by the SYSTEM prompt. Do not write prose, markdown explanations, or any extra text. Preserve the exact wrapper tag and JSON/HTML format.]`;
-      const fallbackResponse = await ctx.generateQuietPrompt(fallbackPrompt, false, false);
+      const fallbackResponse = await ctx.generateQuietPrompt({
+        quietPrompt: fallbackPrompt,
+        prompt: fallbackPrompt,
+        quietToLoud: false,
+        skipWIAN: false,
+      });
       return { response: fallbackResponse, text: extractText(fallbackResponse) };
     };
 
