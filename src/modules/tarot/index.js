@@ -42,10 +42,12 @@ export function updateState(previousState = getDefaultState(), parsedData = {}, 
 
 export function render(data, { lang = 'ru', moduleSettings = {}, currentState = null } = {}) {
   data = currentState?.current || data;
-  const deck = getDeck(moduleSettings.deckStyle);
+  const deckStyle = moduleSettings.deckStyle || 'classic';
+  const deck = getDeck(deckStyle);
   if (!Array.isArray(data?.cards) || !data.cards.length) return '';
+  console.log('[RP Suite][Tarot] deckStyle:', deckStyle, data.cards);
   const cards = data.cards.map((name) => {
-    const img = getCardImage(name, moduleSettings.deckStyle);
+    const img = getCardImage(name, deckStyle);
     return `<div class="tarot-card"><div class="tarot-card-inner"><div class="tarot-card-front"><img src="${esc(img)}" alt="${esc(name)}" loading="lazy"></div><div class="tarot-card-back"><img src="${esc(deck.back)}" alt="Card back" loading="lazy"></div></div></div>`;
   }).join('');
   const label = lang === 'ru' ? 'Раскрыть расклад' : 'Reveal Reading';

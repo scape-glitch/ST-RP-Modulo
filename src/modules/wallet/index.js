@@ -4,9 +4,69 @@ import { localStore, setLocalStore } from '../../core/storage.js';
 import { getCurrentChatIdSafe, getModuleState, setModuleState, KEEP_HISTORY } from '../../core/moduleState.js';
 
 const PFX = 'wallet';
-const POS_KEY = 'wallet_position';
+const POS_KEY = 'rpsuite_wallet_position_v1';
+const LEGACY_POS_KEY = 'wallet_position';
+const DRAG_THRESHOLD = 6;
+const VIEWPORT_MARGIN = 4;
 
 function esc(value) { return String(value ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c])); }
+
+function numberFromCss(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = parseFloat(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function clampPosition(left, top, width, height) {
+  const maxX = Math.max(VIEWPORT_MARGIN, window.innerWidth - width - VIEWPORT_MARGIN);
+  const maxY = Math.max(VIEWPORT_MARGIN, window.innerHeight - height - VIEWPORT_MARGIN);
+  return {
+    left: Math.max(VIEWPORT_MARGIN, Math.min(left, maxX)),
+    top: Math.max(VIEWPORT_MARGIN, Math.min(top, maxY)),
+  };
+}
+
+function readStoredPosition() {
+  const stored = localStore(POS_KEY, null) || localStore(LEGACY_POS_KEY, null);
+  if (!stored) return null;
+  const left = numberFromCss(stored.left);
+  const top = numberFromCss(stored.top);
+  if (left === null || top === null) return null;
+  return { left, top };
+}
+
+function applyStoredPosition($w) {
+  const stored = readStoredPosition();
+  if (!stored) {
+    $w.css({ right: '20px', bottom: '20px', left: 'auto', top: 'auto' });
+    return;
+  }
+  const width = $w.outerWidth() || 40;
+  const height = $w.outerHeight() || 40;
+  const clamped = clampPosition(stored.left, stored.top, width, height);
+  $w.css({ left: `${Math.round(clamped.left)}px`, top: `${Math.round(clamped.top)}px`, right: 'auto', bottom: 'auto' });
+  setLocalStore(POS_KEY, { left: Math.round(clamped.left), top: Math.round(clamped.top) });
+  console.log('[RP Suite][Wallet] restored position', { left: Math.round(clamped.left), top: Math.round(clamped.top) });
+}
+
+function saveWidgetPosition($w) {
+  const rect = $w[0]?.getBoundingClientRect();
+  if (!rect) return null;
+  const position = { left: Math.round(rect.left), top: Math.round(rect.top) };
+  setLocalStore(POS_KEY, position);
+  return position;
+}
+
+function clampCurrentPosition($w) {
+  const rect = $w[0]?.getBoundingClientRect();
+  if (!rect) return;
+  const clamped = clampPosition(rect.left, rect.top, rect.width || $w.outerWidth() || 40, rect.height || $w.outerHeight() || 40);
+  $w.css({ left: `${Math.round(clamped.left)}px`, top: `${Math.round(clamped.top)}px`, right: 'auto', bottom: 'auto' });
+  setLocalStore(POS_KEY, { left: Math.round(clamped.left), top: Math.round(clamped.top) });
+}
 
 export { buildPrompt, parse };
 
@@ -20,6 +80,7 @@ export function destroy(ctx) {
   const $ = ctx.$ || window.jQuery;
   $(`.${PFX}-global-container`).remove();
   $(document).off('.rpsuiteWallet');
+  $(window).off('.rpsuiteWallet');
 }
 
 export function getDefaultState() {
@@ -84,42 +145,108 @@ function ensureWidget(ctx) {
   let $w = $(`.${PFX}-global-container`).first();
   if ($w.length) return $w;
   $w = $(`<div class="${PFX}-global-container"></div>`).appendTo('body');
-  const pos = localStore(POS_KEY, null);
-  if (pos) $w.css({ top: pos.top, left: pos.left, right: 'auto', bottom: 'auto' });
-  else $w.css({ right: '20px', bottom: '20px', left: 'auto', top: 'auto' });
-  let dragging = false;
-  let dx = 0;
-  let dy = 0;
-  $w.on('mousedown.rpsuiteWallet touchstart.rpsuiteWallet', `.${PFX}-header, .${PFX}-container`, (e) => {
-    if ($(e.target).closest('[data-action], [data-wallet-flip], [data-wallet-toggle]').length) return;
-    const oe = e.originalEvent;
-    const point = oe?.touches?.[0] || e;
-    dragging = true;
-    dx = point.clientX - $w.offset().left;
-    dy = point.clientY - $w.offset().top;
-    $w.addClass('dragging');
-    e.preventDefault();
-  });
-  $(document).on('mousemove.rpsuiteWallet touchmove.rpsuiteWallet', (e) => {
-    if (!dragging) return;
-    const oe = e.originalEvent;
-    const point = oe?.touches?.[0] || e;
-    const left = Math.max(0, Math.min(window.innerWidth - $w.outerWidth(), point.clientX - dx));
-    const top = Math.max(0, Math.min(window.innerHeight - $w.outerHeight(), point.clientY - dy));
-    $w.css({ left, top, right: 'auto', bottom: 'auto' });
-    setLocalStore(POS_KEY, { top: `${top}px`, left: `${left}px` });
-  });
-  $(document).on('mouseup.rpsuiteWallet touchend.rpsuiteWallet', () => {
-    if (!dragging) return;
-    dragging = false;
+  applyStoredPosition($w);
+
+  let pointerDown = false;
+  let moved = false;
+  let activePointerId = null;
+  let startX = 0;
+  let startY = 0;
+  let baseLeft = 0;
+  let baseTop = 0;
+  let baseWidth = 0;
+  let baseHeight = 0;
+  let suppressClickUntil = 0;
+
+  const root = $w[0];
+  const isInteractive = (target) => !!target.closest('[data-action], [data-wallet-flip], input, textarea, select, button, a');
+
+  function onPointerDown(e) {
+    if (e.button === 2) return;
+    const target = e.target;
+    const container = target.closest(`.${PFX}-container`);
+    if (!container || !root.contains(container)) return;
+    if (isInteractive(target)) return;
+
+    const collapsed = container.classList.contains('collapsed');
+    const handle = target.closest(`.${PFX}-header`) || (collapsed ? container : null);
+    if (!handle) return;
+
+    const rect = root.getBoundingClientRect();
+    pointerDown = true;
+    moved = false;
+    activePointerId = e.pointerId;
+    startX = e.clientX;
+    startY = e.clientY;
+    baseLeft = rect.left;
+    baseTop = rect.top;
+    baseWidth = rect.width || $w.outerWidth() || 40;
+    baseHeight = rect.height || $w.outerHeight() || 40;
+
+    try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+  }
+
+  function onPointerMove(e) {
+    if (!pointerDown) return;
+    if (activePointerId !== null && e.pointerId !== activePointerId) return;
+
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if (!moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+    if (e.cancelable) e.preventDefault();
+
+    if (!moved) {
+      moved = true;
+      $w.addClass('dragging');
+      const position = { left: Math.round(baseLeft), top: Math.round(baseTop) };
+      console.log('[RP Suite][Wallet] drag start', position);
+    }
+
+    const next = clampPosition(baseLeft + dx, baseTop + dy, baseWidth, baseHeight);
+    $w.css({ left: `${Math.round(next.left)}px`, top: `${Math.round(next.top)}px`, right: 'auto', bottom: 'auto' });
+  }
+
+  function onPointerUp(e) {
+    if (!pointerDown) return;
+    if (activePointerId !== null && e.pointerId !== activePointerId) return;
+
+    pointerDown = false;
+    activePointerId = null;
     $w.removeClass('dragging');
-    setLocalStore(POS_KEY, { top: $w.css('top'), left: $w.css('left') });
-  });
+
+    if (moved) {
+      moved = false;
+      suppressClickUntil = Date.now() + 350;
+      const position = saveWidgetPosition($w);
+      console.log('[RP Suite][Wallet] drag end', position);
+      if (e.cancelable) e.preventDefault();
+    }
+  }
+
+  function onPointerCancel() {
+    pointerDown = false;
+    moved = false;
+    activePointerId = null;
+    $w.removeClass('dragging');
+  }
+
+  root.addEventListener('pointerdown', onPointerDown);
+  root.addEventListener('pointermove', onPointerMove);
+  root.addEventListener('pointerup', onPointerUp);
+  root.addEventListener('pointercancel', onPointerCancel);
+  $(window).on('resize.rpsuiteWallet', () => clampCurrentPosition($w));
+
   $w.on('click.rpsuiteWallet', `[data-${PFX}-toggle]`, (e) => {
     e.stopPropagation();
+    if (Date.now() < suppressClickUntil) {
+      e.preventDefault();
+      return;
+    }
     const $container = $w.find(`.${PFX}-container`);
     $container.toggleClass('collapsed');
     if ($container.hasClass('collapsed')) $container.find(`.${PFX}-balance-flip-container`).removeClass('flipped');
+    console.log('[RP Suite][Wallet] collapsed:', $container.hasClass('collapsed'));
+    requestAnimationFrame(() => clampCurrentPosition($w));
   });
   $w.on('click.rpsuiteWallet', `[data-${PFX}-flip]`, (e) => {
     e.stopPropagation();
@@ -223,6 +350,9 @@ export function render(data, ctx) {
   const state = normalizeWallet(ctx?.currentState?.current || data || {});
   const $w = ensureWidget(ctx);
   const lang = ctx.lang || 'ru';
+  const wasCollapsed = !$w.find(`.${PFX}-container`).length || $w.find(`.${PFX}-container`).hasClass('collapsed');
   $w.html(buildFullWidget(state, lang));
+  if (!wasCollapsed) $w.find(`.${PFX}-container`).removeClass('collapsed');
+  applyStoredPosition($w);
   return $w;
 }

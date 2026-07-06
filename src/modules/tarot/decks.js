@@ -22,6 +22,14 @@ export const DECKS = {
 export function getDeck(style = 'classic') { return DECKS[style] || DECKS.classic; }
 export function getCardImage(cardName, style = 'classic') {
   const deck = getDeck(style);
-  const name = String(cardName || '').trim().replace(/Pentacles/gi, 'Rings');
-  return deck.urls?.[name] || deck.urls?.[cardName] || deck.back;
+  const name = String(cardName || '').trim();
+  if (!name) return deck.back;
+  if (deck.urls?.[name]) return deck.urls[name];
+
+  const normalized = name.replace(/Pentacles/gi, 'Rings');
+  if (deck.urls?.[normalized]) return deck.urls[normalized];
+
+  const lower = normalized.toLowerCase();
+  const match = Object.entries(deck.urls || {}).find(([key]) => key.toLowerCase() === lower);
+  return match?.[1] || deck.back;
 }
