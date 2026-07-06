@@ -1,0 +1,5 @@
+.rpsuite-html-creator, rs_art { display:block; margin:8px 0; }
+.rpsuite-html-creator [data-rs-action], .rpsuite-html-creator [data-rs-send], .rpsuite-html-creator [data-rs-flip], rs_art [data-rs-action], rs_art [data-rs-send], rs_art [data-rs-flip] { cursor:pointer; }
+.rs-flipped [data-rs-face="front"] { display:none !important; }
+.rs-flipped [data-rs-face="back"] { display:block !important; }
+[data-rs-face="back"] { display:none; }

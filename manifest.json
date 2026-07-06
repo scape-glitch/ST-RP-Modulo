@@ -1,0 +1,12 @@
+{
+  "name": "ST-RP-Modulo",
+  "display_name": "ST RP Modulo",
+  "loading_order": 15,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "scape-glitch / Cline",
+  "version": "0.1.0",
+  "homePage": "https://github.com/scape-glitch/ST-RP-Modulo"
+}

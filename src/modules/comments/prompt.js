@@ -1,0 +1,4 @@
+export function buildPrompt({ lang = 'ru' }) {
+  const languageRule = lang === 'ru' ? 'All comments must be Russian, with natural slang where appropriate.' : 'All comments must be English, with natural internet slang where appropriate.';
+  return `[System Note: Generate a fictional Twitter/X comment section reacting to the newest roleplay events. At the end output ONLY valid JSON inside <social_comments> tags, JSON in an HTML comment: <social_comments><!-- {"comments":[{"username":"user","display_name":"Display","avatar_emoji":"⭐","verified":false,"comment":"...","likes":12,"retweets":1,"replies":0,"time":"now"}]} --></social_comments>. Produce 4 to 8 varied commenters. Do not impersonate the story author/player. ${languageRule}]`;
+}

@@ -1,0 +1,4 @@
+.rpsuite-infoblock { display:grid; gap:7px; }
+.rpsuite-infoblock-row { display:grid; grid-template-columns:minmax(120px,.35fr) 1fr; gap:8px; padding:6px 8px; border-radius:10px; background:rgba(255,255,255,.06); }
+.rpsuite-infoblock-row b { color:#93c5fd; }
+@media (max-width:600px){ .rpsuite-infoblock-row{ grid-template-columns:1fr; } }
