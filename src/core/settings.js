@@ -13,12 +13,12 @@ export const DEFAULT_MODULE_SETTINGS = Object.freeze({
 });
 
 export const MODULE_MAX_TOKENS = Object.freeze({
-  metrics: 1200,
-  tarot: 900,
-  comments: 3500,
-  infoblock: 1500,
-  wallet: 1600,
-  html_creator: 3500,
+  metrics: 7000,
+  tarot: 1200,
+  comments: 7000,
+  infoblock: 3000,
+  wallet: 3000,
+  html_creator: 5000,
 });
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
