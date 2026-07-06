@@ -4,6 +4,7 @@ export function parse(messageText) {
   const data = parseTaggedJSON(messageText, 'social_comments', null);
   if (!data?.comments || !Array.isArray(data.comments)) return null;
   return data.comments.slice(0, 12).map((c, i) => ({
+    id: String(c.id || c.comment_id || `${String(c.username || `user${i + 1}`).replace(/^@/, '')}-${i}`),
     username: String(c.username || `user${i + 1}`).replace(/^@/, ''),
     display_name: String(c.display_name || c.name || c.username || 'User'),
     avatar_emoji: String(c.avatar_emoji || '👤'),
@@ -13,5 +14,6 @@ export function parse(messageText) {
     retweets: Number(c.retweets || 0),
     replies: Number(c.replies || 0),
     time: String(c.time || 'now'),
+    is_reply_to: c.is_reply_to || null,
   })).filter((c) => c.comment);
 }

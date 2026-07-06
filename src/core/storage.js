@@ -24,10 +24,21 @@ export function loadSuiteStyles(ctx) {
 }
 
 export function localStore(key, fallback = null) {
-  try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch (_) { return fallback; }
+  try {
+    return JSON.parse(localStorage.getItem(key)) ?? fallback;
+  } catch (error) {
+    console.warn('[RP Suite] localStorage read failed:', key, error);
+    return fallback;
+  }
 }
 
 export function setLocalStore(key, value) {
-  if (value === undefined || value === null) localStorage.removeItem(key);
-  else localStorage.setItem(key, JSON.stringify(value));
+  try {
+    if (value === undefined || value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch (error) {
+    console.warn('[RP Suite] localStorage write failed:', key, error);
+    return false;
+  }
 }

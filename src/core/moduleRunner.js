@@ -1,5 +1,6 @@
 import { isModuleEnabled } from './settings.js';
 import { getMessageId, renderModuleResults } from './renderPipeline.js';
+import { getCurrentChatIdSafe, getModuleState, setModuleState } from './moduleState.js';
 
 const messageStates = new Map();
 const RECENT_CONTEXT_LIMIT = 5;
@@ -51,25 +52,55 @@ function getNames(ctx) {
   };
 }
 
+function clone(value) {
+  if (value === undefined) return undefined;
+  try { return JSON.parse(JSON.stringify(value)); } catch (_) { return value; }
+}
+
+function isEmptyState(value) {
+  return !value || (typeof value === 'object' && !Array.isArray(value) && !Object.keys(value).length);
+}
+
+function getPreviousState(mod, chatId) {
+  const stored = getModuleState(chatId, mod.id);
+  if (!isEmptyState(stored)) return stored;
+  return typeof mod.getDefaultState === 'function' ? mod.getDefaultState() : (stored || null);
+}
+
+function formatStateForPrompt(state) {
+  try { return JSON.stringify(state ?? null, null, 2); } catch (_) { return 'null'; }
+}
+
 export function buildModuleUserPayload($mes, moduleCtx = {}) {
   const names = getNames(moduleCtx);
   const latest = moduleCtx.messageText || getVisibleMessageText($mes);
   const recent = getRecentContext($mes);
-  return `Latest assistant message:\n"""\n${latest}\n"""\n\nRecent context:\n"""\n${recent || 'No recent context available.'}\n"""\n\nChat metadata:\n- Character: ${names.character || 'unknown'}\n- User: ${names.user || 'unknown'}\n- Chat: ${names.chat || 'unknown'}\n\nGenerate only the output block required by your system prompt.`;
+  const previous = moduleCtx.previousState !== undefined
+    ? `\n\nPrevious persistent module state for ${moduleCtx.moduleId || 'module'}:\n\`\`\`json\n${formatStateForPrompt(moduleCtx.previousState)}\n\`\`\``
+    : '';
+  return `Latest assistant message:\n"""\n${latest}\n"""\n\nRecent context:\n"""\n${recent || 'No recent context available.'}\n"""\n\nChat metadata:\n- Character: ${names.character || 'unknown'}\n- User: ${names.user || 'unknown'}\n- Chat: ${names.chat || 'unknown'}${previous}\n\nGenerate only the output block required by your system prompt.`;
 }
 
-function getModuleContext(ctx, mod, $mes, messageId, messageText) {
+function getModuleContext(ctx, mod, $mes, messageId, messageText, extra = {}) {
   return {
     ...ctx.registry.getModuleContext(mod.id),
     $mes,
     messageId,
     messageText,
     latestMessageText: messageText,
+    ...extra,
   };
 }
 
 async function runModuleGeneration(mod, $mes, ctx, messageId, messageText) {
-  const moduleCtx = getModuleContext(ctx, mod, $mes, messageId, messageText);
+  const chatId = getCurrentChatIdSafe(ctx);
+  const previousState = getPreviousState(mod, chatId);
+  console.log(`[RP Suite] previous state for ${mod.id}:`, previousState);
+  const moduleCtx = getModuleContext(ctx, mod, $mes, messageId, messageText, {
+    chatId,
+    previousState,
+    moduleState: previousState,
+  });
   const systemPrompt = mod.buildPrompt?.(moduleCtx);
   if (!systemPrompt) return { id: mod.id, raw: '', parsed: null, html: '' };
   const messages = [
@@ -83,9 +114,17 @@ async function runModuleGeneration(mod, $mes, ctx, messageId, messageText) {
   console.log(`[RP Suite] module ${mod.id} raw response:`, raw);
   const parsed = mod.parse?.(raw, moduleCtx) || null;
   console.log(`[RP Suite] module ${mod.id} parsed:`, parsed);
-  const html = parsed && mod.render ? mod.render(parsed, moduleCtx) : '';
+  let nextState = previousState;
+  if (parsed && typeof mod.updateState === 'function') {
+    nextState = mod.updateState(clone(previousState), parsed, moduleCtx);
+    console.log(`[RP Suite] updated state for ${mod.id}:`, nextState);
+    setModuleState(chatId, mod.id, nextState);
+    console.log(`[RP Suite] saved state for ${mod.id}`);
+  }
+  const renderCtx = { ...moduleCtx, previousState, moduleState: nextState, currentState: nextState };
+  const html = parsed && mod.render && mod.renderMode !== 'floating' ? mod.render(parsed, renderCtx) : '';
   if (html || parsed) console.log(`[RP Suite] module ${mod.id} rendered`);
-  return { id: mod.id, order: mod.renderOrder, raw, parsed, html };
+  return { id: mod.id, order: mod.renderOrder, raw, parsed, html, state: nextState };
 }
 
 function getEnabledMessageBlockModules(ctx) {
@@ -141,7 +180,14 @@ async function runFloatingModulesForMessage($mes, ctx, messageId, messageText) {
   for (const mod of floating) {
     try {
       const item = await runModuleGeneration(mod, $mes, ctx, messageId, messageText);
-      if (item.parsed && mod.render) mod.render(item.parsed, getModuleContext(ctx, mod, $mes, messageId, messageText));
+      if (item.parsed && mod.render) {
+        mod.render(item.parsed, getModuleContext(ctx, mod, $mes, messageId, messageText, {
+          chatId: getCurrentChatIdSafe(ctx),
+          previousState: item.state,
+          moduleState: item.state,
+          currentState: item.state,
+        }));
+      }
       results.push(item);
     } catch (error) {
       console.error(`[RP Suite] module ${mod.id} failed:`, error);

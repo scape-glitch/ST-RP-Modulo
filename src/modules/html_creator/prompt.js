@@ -21,12 +21,18 @@ export const DETAIL_BOOSTS = [
 ];
 
 function pick(arr, count) { return [...arr].sort(() => Math.random() - 0.5).slice(0, count); }
+function formatState(state) { try { return JSON.stringify(state ?? null, null, 2); } catch (_) { return 'null'; } }
 
-export function buildPrompt({ lang = 'ru' }) {
+export function buildPrompt({ lang = 'ru', previousState = null }) {
   const visibleRule = lang === 'ru'
     ? 'Visible text inside <rs_art> must be Russian. data-rs-action text must be Russian.'
     : 'Visible text inside <rs_art> must be English. data-rs-action text must be English.';
-  return `[System Note: Whenever the scene contains a visual object (screen, letter, note, document, UI, sign, chat, app interface, poster, card, map, HUD, display), render it as a rich live CSS-only HTML block. If the scene is pure dialogue with no visual object, you may skip. Output at most one raw HTML block per message using exactly this wrapper:
+  return `[System Note: Whenever the scene contains a visual object (screen, letter, note, document, UI, sign, chat, app interface, poster, card, map, HUD, display), render it as a rich live CSS-only HTML block. If the scene is pure dialogue with no visual object, you may skip.
+
+Previous html_creator state:
+${formatState(previousState)}
+
+Output at most one raw HTML block per message using exactly this wrapper:
 <rs_art>
 RAW_HTML_HERE
 </rs_art>

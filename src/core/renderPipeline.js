@@ -1,4 +1,5 @@
 import { cleanHiddenJSONText } from './jsonRepair.js';
+import { getCurrentChatIdSafe, getModuleState } from './moduleState.js';
 
 export function getMessageId($mes) {
   return $mes.attr('mesid') || $mes.data('mesid') || $mes.attr('id') || String($mes.index());
@@ -42,6 +43,17 @@ export function renderModuleResults($mes, results = [], ctx = {}) {
   return $container;
 }
 
+function getStateForMessage(storedState, moduleId, messageId) {
+  if (!storedState) return null;
+  if (moduleId === 'comments') return storedState.sections?.[String(messageId)] ? storedState : null;
+  const entry = Array.isArray(storedState.history)
+    ? storedState.history.find((item) => String(item.messageId) === String(messageId))
+    : null;
+  if (!entry) return null;
+  const { messageId: _messageId, ts: _ts, ...current } = entry;
+  return { ...storedState, current };
+}
+
 export function renderMessageModules($mes, ctx) {
   if (!$mes?.length || !ctx.registry) return;
   const messageText = getMessageText($mes);
@@ -51,8 +63,13 @@ export function renderMessageModules($mes, ctx) {
     if (mod.renderMode !== 'message-block') continue;
     const mctx = ctx.registry.getModuleContext(mod.id);
     const parsed = mod.parse?.(messageText, mctx);
-    if (!parsed) continue;
-    const html = mod.render?.(parsed, mctx);
+    const messageId = getMessageId($mes);
+    const chatId = getCurrentChatIdSafe(ctx);
+    const storedState = getModuleState(chatId, mod.id);
+    const stateForMessage = getStateForMessage(storedState, mod.id, messageId);
+    const renderCtx = { ...mctx, chatId, messageId, previousState: storedState, moduleState: stateForMessage || storedState, currentState: stateForMessage };
+    if (!parsed && !stateForMessage) continue;
+    const html = mod.render?.(parsed, renderCtx);
     if (!html) continue;
     results.push({ id: mod.id, order: mod.renderOrder, html });
   }

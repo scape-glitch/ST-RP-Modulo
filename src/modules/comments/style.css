@@ -5,3 +5,12 @@
 .rpsuite-comments-body span, .rpsuite-comments-body footer { color:color-mix(in srgb, currentColor, transparent 38%); font-size:.78rem; }
 .rpsuite-comments-body p { margin:.25em 0; }
 .rpsuite-comments-verified { color:#60a5fa !important; }
+.rpsuite-comments-body footer { display:flex; gap:10px; align-items:center; }
+.rpsuite-comments-body button { border:0; border-radius:8px; padding:3px 8px; background:rgba(255,255,255,.08); color:inherit; cursor:pointer; font-size:.78rem; }
+.rpsuite-comments-body button:hover { background:rgba(255,255,255,.16); }
+.rpsuite-comments-replies { display:grid; gap:4px; margin:.35em 0; }
+.rpsuite-comments-reply { border-left:2px solid rgba(255,255,255,.16); padding-left:8px; font-size:.82rem; opacity:.9; }
+.rpsuite-comments-reply-author { border-left-color:#facc15; }
+.rpsuite-comments-reply-box { display:flex; gap:6px; margin-top:5px; }
+.rpsuite-comments-reply-box input { flex:1; min-width:0; border:1px solid rgba(255,255,255,.12); border-radius:8px; padding:4px 8px; background:rgba(0,0,0,.14); color:inherit; font-size:.78rem; }
+.rpsuite-comments-author-box { opacity:.78; }

@@ -1,4 +1,5 @@
 import { buildModuleContext, getModuleSettings, isModuleEnabled } from './settings.js';
+import { getCurrentChatIdSafe, getModuleState } from './moduleState.js';
 import * as metrics from '../modules/metrics/index.js';
 import * as tarot from '../modules/tarot/index.js';
 import * as comments from '../modules/comments/index.js';
@@ -57,7 +58,9 @@ export function createRegistry(ctx) {
         if (!isModuleEnabled(mod.id) || mod.renderMode !== 'floating') continue;
         const mctx = api.getModuleContext(mod.id);
         const parsed = mod.parse?.(messageText, mctx);
-        mod.render?.(parsed, mctx);
+        const chatId = getCurrentChatIdSafe(ctx);
+        const state = getModuleState(chatId, mod.id);
+        mod.render?.(parsed || state?.current || null, { ...mctx, chatId, previousState: state, moduleState: state, currentState: state });
       }
     },
     getModuleSettings,
