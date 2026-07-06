@@ -21,6 +21,11 @@ Place the JSON inside an HTML comment: <tarot_reading><!-- { ... } --></tarot_re
 
 CRITICAL: Output the JSON as a single line, without any line breaks or newlines inside the comment.
 
+Text fields may use lightweight Markdown for emphasis, lists, inline code, and line breaks when it improves readability.
+Do not use raw HTML in JSON text fields.
+Do not put markdown outside the required hidden block.
+All markdown must be inside JSON string values only.
+
 Example: <tarot_reading><!-- {"cards": ["The Fool", "Death", "The Star"], "interpretation": "..."} --></tarot_reading>
 
 JSON structure:

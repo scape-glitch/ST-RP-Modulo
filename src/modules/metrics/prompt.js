@@ -15,6 +15,11 @@ ${formatState(previousState)}
 CRITICAL: Output the JSON as a single line, without any line breaks or newlines inside the comment.
 Example: <rs_metrics><!-- {"characters": [{"name": "...", ...}, {"name": "...", ...}]} --></rs_metrics>
 
+Text fields may use lightweight Markdown for emphasis, lists, inline code, and line breaks when it improves readability.
+Do not use raw HTML in JSON text fields.
+Do not put markdown outside the required hidden block.
+All markdown must be inside JSON string values only.
+
 **MANDATORY COVERAGE OF ALL CHARACTERS — NON-NEGOTIABLE**:
 - The main assistant character is ALWAYS the FIRST and MANDATORY ENTRY. The first object in the "characters" array MUST ALWAYS be the main character in EVERY reply.
 - After the main character, add ONE object for EVERY OTHER character/NPC (except the user) present, speaking, acting, or participating in THIS reply.

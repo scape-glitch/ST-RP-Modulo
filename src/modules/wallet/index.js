@@ -2,6 +2,7 @@ import { buildPrompt } from './prompt.js';
 import { parse } from './parser.js';
 import { localStore, setLocalStore } from '../../core/storage.js';
 import { getCurrentChatIdSafe, getModuleState, setModuleState, KEEP_HISTORY } from '../../core/moduleState.js';
+import { renderInlineMarkdownSafe, renderMarkdownSafe } from '../../core/markdown.js';
 
 const PFX = 'wallet';
 const POS_KEY = 'rpsuite_wallet_position_v1';
@@ -10,6 +11,8 @@ const DRAG_THRESHOLD = 6;
 const VIEWPORT_MARGIN = 4;
 
 function esc(value) { return String(value ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c])); }
+function mdInline(value) { return renderInlineMarkdownSafe(value); }
+function mdBlock(value) { return renderMarkdownSafe(value, { compact: true }); }
 
 function numberFromCss(value) {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -346,14 +349,18 @@ function buildExpensesHTML(wallet, lang) {
     const penaltyText = Number(e.penalty) > 0 ? ` (+${esc(e.penalty)} ${currency})` : '';
     const deleteBtn = e.recurring ? '' : `<span class="${PFX}-delete-expense" data-action="deleteExpense" data-idx="${idx}">✕</span>`;
     const statusText = e.paid ? (lang === 'ru' ? 'Оплачено' : 'Paid') : (lang === 'ru' ? 'Не оплачено' : 'Unpaid');
-    return `<div class="${PFX}-expense-item ${paidClass}"><span class="${PFX}-expense-toggle" data-action="togglePaid" data-idx="${idx}"><span class="${PFX}-expense-icon">${esc(e.icon || '💸')}</span><span class="${PFX}-expense-name">${esc(e.name)}</span><span class="${PFX}-expense-amount">${esc(e.amount || 0)} ${currency}${penaltyText}<span class="${PFX}-status-text">${statusText}</span></span></span>${deleteBtn}${!e.paid && e.recurring && (e.overdue_days > 0 || e.penalty > 0) ? `<span class="${PFX}-overdue">${lang === 'ru' ? 'Просрочено' : 'Overdue'} ${esc(e.overdue_days || 0)} ${lang === 'ru' ? 'дн.' : 'd'}</span>` : ''}</div>`;
+    const note = e.description || e.note || e.notes || '';
+    return `<div class="${PFX}-expense-item ${paidClass}"><span class="${PFX}-expense-toggle" data-action="togglePaid" data-idx="${idx}"><span class="${PFX}-expense-icon">${esc(e.icon || '💸')}</span><span class="${PFX}-expense-name">${mdInline(e.name)}${note ? `<span class="${PFX}-expense-note">${mdInline(note)}</span>` : ''}</span><span class="${PFX}-expense-amount">${esc(e.amount || 0)} ${currency}${penaltyText}<span class="${PFX}-status-text">${statusText}</span></span></span>${deleteBtn}${!e.paid && e.recurring && (e.overdue_days > 0 || e.penalty > 0) ? `<span class="${PFX}-overdue">${lang === 'ru' ? 'Просрочено' : 'Overdue'} ${esc(e.overdue_days || 0)} ${lang === 'ru' ? 'дн.' : 'd'}</span>` : ''}</div>`;
   }).join('');
 }
 
 function buildIncomeHTML(wallet, lang) {
   const currency = esc(wallet.currency);
   if (!wallet.income.length) return `<div class="${PFX}-empty">${lang === 'ru' ? 'Нет доходов' : 'No income'}</div>`;
-  return wallet.income.map((i, idx) => `<div class="${PFX}-income-item ${i.received ? 'received' : 'not-received'}"><span class="${PFX}-income-toggle" data-action="toggleReceived" data-idx="${idx}"><span class="${PFX}-income-icon">${esc(i.icon || '💵')}</span><span class="${PFX}-income-name">${esc(i.name)}</span><span class="${PFX}-income-amount">+${esc(i.amount || 0)} ${currency}<span class="${PFX}-status-text">${i.received ? (lang === 'ru' ? 'Получено' : 'Received') : (lang === 'ru' ? 'Ожидается' : 'Pending')}</span></span></span></div>`).join('');
+  return wallet.income.map((i, idx) => {
+    const note = i.description || i.note || i.notes || '';
+    return `<div class="${PFX}-income-item ${i.received ? 'received' : 'not-received'}"><span class="${PFX}-income-toggle" data-action="toggleReceived" data-idx="${idx}"><span class="${PFX}-income-icon">${esc(i.icon || '💵')}</span><span class="${PFX}-income-name">${mdInline(i.name)}${note ? `<span class="${PFX}-income-note">${mdInline(note)}</span>` : ''}</span><span class="${PFX}-income-amount">+${esc(i.amount || 0)} ${currency}<span class="${PFX}-status-text">${i.received ? (lang === 'ru' ? 'Получено' : 'Received') : (lang === 'ru' ? 'Ожидается' : 'Pending')}</span></span></span></div>`;
+  }).join('');
 }
 
 function buildBalanceFront(wallet, lang, statusClass, statusEffect) {
@@ -361,8 +368,9 @@ function buildBalanceFront(wallet, lang, statusClass, statusEffect) {
 }
 
 function buildBalanceBack(wallet) {
-  const note = esc(wallet.note || 'Пустота...');
-  const len = note.length;
+  const noteRaw = wallet.note || 'Пустота...';
+  const note = mdBlock(noteRaw);
+  const len = String(noteRaw).length;
   const fontSize = len > 60 ? 10 : len > 40 ? 11 : len > 25 ? 12 : 13;
   return `<div class="${PFX}-balance-back"><div class="${PFX}-back-content" style="font-size:${fontSize}px;"><span class="${PFX}-back-icon">💸</span><span class="${PFX}-back-note" style="font-size:${fontSize}px;">${note}</span></div><div class="${PFX}-flip-hint" data-${PFX}-flip>↻</div></div>`;
 }

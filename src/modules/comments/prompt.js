@@ -20,6 +20,11 @@ ${formatState(previousState)}
 CRITICAL: Output the JSON as a SINGLE line, no line breaks inside the comment.
 Example: <social_comments><!-- {"comments": [...]} --></social_comments>
 
+Text fields may use lightweight Markdown for emphasis, lists, inline code, and line breaks when it improves readability.
+Do not use raw HTML in JSON text fields.
+Do not put markdown outside the required hidden block.
+All markdown must be inside JSON string values only.
+
 **HOW MANY**: Produce 8 to 11 commenters. Lean toward MORE (10-11) when events are dramatic or there is a big argument thread; fewer (8) when quiet. Never a fixed quota.
 
 **THE GOLDEN RULE — REAL CHAOTIC HUMANS, NOT A TEMPLATE**:

@@ -1,6 +1,7 @@
 import { buildPrompt } from './prompt.js';
 import { parse } from './parser.js';
 import { KEEP_HISTORY } from '../../core/moduleState.js';
+import { renderInlineMarkdownSafe } from '../../core/markdown.js';
 
 const PFX = 'rs-mtrx';
 const THEME_KEY = 'rs_mtrx_theme';
@@ -11,7 +12,7 @@ const LABELS = {
 };
 
 function esc(value) { return String(value ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c])); }
-function mdInline(value) { return esc(value).replace(/`([^`]+)`/g, `<span class="${PFX}-code">$1</span>`).replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>'); }
+function mdInline(value) { return renderInlineMarkdownSafe(value); }
 function clamp(value, min = 0, max = 100) { return Math.max(min, Math.min(max, Number(value) || 0)); }
 function formatStatValue(value) { return `${Math.round(clamp(value))}%`; }
 function getLabel(key, lang) { return (LABELS[lang] || LABELS.en)[key] || key; }
@@ -155,10 +156,10 @@ function characterCard(c, lang, first) {
     <div class="${PFX}-card-front" style="background-image:linear-gradient(135deg, ${c.mood_hex}22, transparent 70%); --${PFX}-char-color:${c.color || '#888'};">
       ${namePlate(c.name, c.color, c.mood_hex)}
       <div class="${PFX}-stats">
-        <div class="${PFX}-stat mood" style="background:${c.mood_hex}22; border-left:3px solid ${c.mood_hex};"><span class="${PFX}-mood-text" style="color:${c.mood_hex}">${esc(c.mood)}</span>${themeBtn}</div>
+        <div class="${PFX}-stat mood" style="background:${c.mood_hex}22; border-left:3px solid ${c.mood_hex};"><span class="${PFX}-mood-text" style="color:${c.mood_hex}">${mdInline(c.mood)}</span>${themeBtn}</div>
         <div class="${PFX}-stat thoughts" style="background:${c.thoughts_hex}22; border-left:3px solid ${c.thoughts_hex};"><span class="${PFX}-thoughts-text" style="color:${c.thoughts_hex}">${mdInline(c.thoughts)}</span></div>
         ${c.intention ? `<div class="${PFX}-stat intention" style="background:#ffffff10; border-left:3px solid #c9b8ff;"><span class="${PFX}-stat-icon" style="color:#c9b8ff">${ICONS_SVG.intention}</span><span class="${PFX}-intention-text">${mdInline(c.intention)}</span></div>` : ''}
-        <div class="${PFX}-stat relationship" style="background:${c.relationship_hex}22; border-left:3px solid ${c.relationship_hex};"><span class="${PFX}-stat-icon" style="color:${c.relationship_hex}">${ICONS_SVG.relationship}</span><span class="${PFX}-stat-label">${getLabel('relationship', lang)}</span><span class="${PFX}-stat-value">${Math.round(Number(c.relationship) || 0)}</span>${c.feeling ? `<span class="${PFX}-feeling-tag" style="color:${c.relationship_hex}; border-color:${c.relationship_hex}66;">${esc(c.feeling)}</span>` : ''}${bidir(c.relationship, c.relationship_hex)}</div>
+        <div class="${PFX}-stat relationship" style="background:${c.relationship_hex}22; border-left:3px solid ${c.relationship_hex};"><span class="${PFX}-stat-icon" style="color:${c.relationship_hex}">${ICONS_SVG.relationship}</span><span class="${PFX}-stat-label">${getLabel('relationship', lang)}</span><span class="${PFX}-stat-value">${Math.round(Number(c.relationship) || 0)}</span>${c.feeling ? `<span class="${PFX}-feeling-tag" style="color:${c.relationship_hex}; border-color:${c.relationship_hex}66;">${mdInline(c.feeling)}</span>` : ''}${bidir(c.relationship, c.relationship_hex)}</div>
         <div class="${PFX}-stat arousal ${c.arousal > 80 ? `${PFX}-pulse` : ''}" style="background:${c.arousal_hex}22; border-left:3px solid ${c.arousal_hex};"><span class="${PFX}-stat-icon">${ICONS_SVG.arousal(c.arousal)}</span><span class="${PFX}-stat-label">${getLabel('arousal', lang)}</span><span class="${PFX}-stat-value">${formatStatValue(c.arousal)}${c.arousal > 100 ? `<span class="${PFX}-overload">${getLabel('overload', lang)}</span>` : ''}</span><div class="${PFX}-progress-bar">${zones()}<div class="${PFX}-progress-fill" style="width:${arousalPercent}%; background:${c.arousal_hex};"></div></div></div>
         <div class="${PFX}-stat grudge ${c.grudge > 80 ? `${PFX}-shake` : ''}" style="background:${c.grudge_hex}22; border-left:3px solid ${c.grudge_hex};"><span class="${PFX}-stat-icon">${ICONS_SVG.grudge(c.grudge)}</span><span class="${PFX}-stat-label">${getLabel('grudge', lang)}</span><span class="${PFX}-stat-value">${formatStatValue(c.grudge)}</span><div class="${PFX}-progress-bar">${zones()}<div class="${PFX}-progress-fill" style="width:${grudgePercent}%; background:${c.grudge_hex};"></div></div></div>
         <div class="${PFX}-stat respect" style="background:${c.respect_hex}22; border-left:3px solid ${c.respect_hex};"><span class="${PFX}-stat-icon">${ICONS_SVG.respect}</span><span class="${PFX}-stat-label">${getLabel('respect', lang)}</span><span class="${PFX}-stat-value">${c.respect === 'MAX' ? 'MAX' : formatStatValue(c.respect)}</span><div class="${PFX}-progress-bar">${zones()}<div class="${PFX}-progress-fill" style="width:${respectPercent}%; background:${c.respect_hex};"></div></div></div>

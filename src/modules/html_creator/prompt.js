@@ -37,6 +37,8 @@ Wrap it EXACTLY like this - RAW HTML directly inside the tag. NO HTML comment wr
 RAW_HTML_HERE
 </rs_art>
 
+Do not wrap <rs_art> in markdown fences.
+
 Output AT MOST ONE <rs_art> block per message.
 
 MAKE IT ALIVE (core requirement - never a static box):

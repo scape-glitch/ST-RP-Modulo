@@ -2,6 +2,7 @@ import { buildPrompt } from './prompt.js';
 import { parse } from './parser.js';
 import { getCardImage, getDeck } from './decks.js';
 import { KEEP_HISTORY } from '../../core/moduleState.js';
+import { renderMarkdownSafe } from '../../core/markdown.js';
 
 function esc(value) { return String(value ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c])); }
 
@@ -51,5 +52,5 @@ export function render(data, { lang = 'ru', moduleSettings = {}, currentState = 
     return `<div class="tarot-card"><div class="tarot-card-inner"><div class="tarot-card-front"><img src="${esc(img)}" alt="${esc(name)}" loading="lazy"></div><div class="tarot-card-back"><img src="${esc(deck.back)}" alt="Card back" loading="lazy"></div></div></div>`;
   }).join('');
   const label = lang === 'ru' ? 'Раскрыть расклад' : 'Reveal Reading';
-  return `<div class="${deck.className}"><div class="tarot-container"><div class="tarot-cards">${cards}</div><div class="tarot-reading"><div class="tarot-reading-header" data-tarot-toggle-reading><span class="tarot-header-icon">🔮</span><span class="tarot-header-label">${esc(label)}</span><span class="tarot-chevron">▼</span></div><div class="tarot-reading-body" style="display:none;"><div class="tarot-reading-text">${esc(data.interpretation)}</div></div></div></div></div>`;
+  return `<div class="${deck.className}"><div class="tarot-container"><div class="tarot-cards">${cards}</div><div class="tarot-reading"><div class="tarot-reading-header" data-tarot-toggle-reading><span class="tarot-header-icon">🔮</span><span class="tarot-header-label">${esc(label)}</span><span class="tarot-chevron">▼</span></div><div class="tarot-reading-body" style="display:none;"><div class="tarot-reading-text">${renderMarkdownSafe(data.interpretation, { compact: true })}</div></div></div></div></div>`;
 }

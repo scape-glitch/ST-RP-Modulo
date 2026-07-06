@@ -16,6 +16,11 @@ CRITICAL: Output the JSON as a single line, without any line breaks or newlines 
 
 Example: <wallet_state><!-- {"balance": ..., ...} --></wallet_state>
 
+Text fields may use lightweight Markdown for emphasis, lists, inline code, and line breaks when it improves readability.
+Do not use raw HTML in JSON text fields.
+Do not put markdown outside the required hidden block.
+All markdown must be inside JSON string values only.
+
 **MANDATORY UPDATE RULE**: You MUST reflect ANY new expenses or income that appear in the story. If the user buys something, add it as an expense. If the user earns money, add it as income. Do NOT simply repeat the previous state if the latest scene changes finances. If nothing changed, keep the state identical, but still output the complete wallet JSON.
 
 JSON structure:
