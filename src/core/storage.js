@@ -21,6 +21,7 @@ export function loadSuiteStyles(ctx) {
     'src/modules/wallet/style.css',
     'src/modules/html_creator/style.css',
   ].forEach((path) => loadCssOnce(`${base}/${path}`));
+  console.info('[RP Suite] styles loaded');
 }
 
 export function localStore(key, fallback = null) {

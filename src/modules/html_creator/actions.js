@@ -42,7 +42,7 @@ export function wireActions($root) {
   }));
   root.querySelectorAll('[data-rs-send]').forEach((el) => wireOnce(el, 'click', (e) => {
     e.preventDefault();
-    const box = el.closest('[data-rs-reply]') || root.querySelector('[data-rs-reply]');
+    const box = root.querySelector('[data-rs-reply]');
     sendUserAction(box?.value || box?.textContent || el.getAttribute('data-rs-send'));
   }));
   root.querySelectorAll('[data-rs-reply]').forEach((el) => {
@@ -57,7 +57,14 @@ export function wireActions($root) {
   });
   root.querySelectorAll('[data-rs-flip]').forEach((el) => wireOnce(el, 'click', (e) => {
     e.preventDefault();
-    const target = el.closest('.rs-art-flip, .rsa-flip') || el.parentElement;
-    target?.classList.toggle('rs-flipped');
+    const faceEl = el.closest('[data-rs-face]');
+    const scope = faceEl?.parentElement || el.parentElement;
+    if (!scope) return;
+    const front = scope.querySelector('[data-rs-face="front"]');
+    const back = scope.querySelector('[data-rs-face="back"]');
+    scope.classList.toggle('rs-flipped');
+    const flipped = scope.classList.contains('rs-flipped');
+    if (front) front.style.display = flipped ? 'none' : '';
+    if (back) back.style.display = flipped ? '' : 'none';
   }));
 }
