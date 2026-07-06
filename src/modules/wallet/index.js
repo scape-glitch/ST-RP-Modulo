@@ -67,21 +67,36 @@ function applyStoredPosition($w) {
 
 function readWalletUiState(ctx = {}, $w = null) {
   const stored = getModuleState(getCurrentChatIdSafe(ctx), 'wallet')?.ui || {};
+  const userToggled = stored.userToggled === true;
   const hasStoredCollapsed = typeof stored.collapsed === 'boolean';
-  const domCollapsed = $w?.find?.(`.${PFX}-container`).length ? $w.find(`.${PFX}-container`).hasClass('collapsed') : true;
+  let collapsed;
+  if (userToggled && hasStoredCollapsed) {
+    // Only trust a saved collapsed:false if the user explicitly toggled it.
+    collapsed = stored.collapsed;
+  } else if (hasStoredCollapsed && stored.collapsed === true) {
+    collapsed = true;
+  } else if ($w?.find?.(`.${PFX}-container`).length) {
+    // Preserve actual DOM state across re-renders instead of forcing changes.
+    collapsed = $w.find(`.${PFX}-container`).hasClass('collapsed');
+  } else {
+    // Safe default for a floating widget: start collapsed.
+    collapsed = true;
+  }
   return {
-    collapsed: hasStoredCollapsed ? stored.collapsed : domCollapsed,
+    collapsed,
+    userToggled,
     position: stored.position || readStoredPosition() || null,
   };
 }
 
 function applyWalletUiState($w, uiState = {}) {
   const $container = $w.find(`.${PFX}-container`);
+  // Render must never toggle: it only applies the resolved persisted/DOM state.
   const collapsed = uiState.collapsed !== false;
   $container.toggleClass('collapsed', collapsed);
   if (collapsed) $container.find(`.${PFX}-balance-flip-container`).removeClass('flipped');
   applyStoredPosition($w);
-  console.log('[RP Suite][Wallet] apply ui state', { collapsed, position: readStoredPosition() });
+  console.log('[RP Suite][Wallet] apply ui state', { collapsed, position: readStoredPosition(), userToggled: uiState.userToggled === true, source: 'render' });
 }
 
 function persistWalletUi(ctx = {}, patch = {}) {
@@ -113,13 +128,17 @@ function saveWalletUiState(ctx = {}, $w = null, patch = {}) {
   return ui;
 }
 
-function toggleWalletCollapsed(ctx = {}, $w) {
+function toggleWalletCollapsed(ctx = {}, $w, event = null) {
+  // Collapsed state may change ONLY via a real user click/tap.
+  if (!event) return;
+  const original = event.originalEvent || event;
+  if (original && original.isTrusted === false) return;
   const $container = $w.find(`.${PFX}-container`);
   const nextCollapsed = !$container.hasClass('collapsed');
   $container.toggleClass('collapsed', nextCollapsed);
   if (nextCollapsed) $container.find(`.${PFX}-balance-flip-container`).removeClass('flipped');
-  saveWalletUiState(ctx, $w, { collapsed: nextCollapsed });
-  console.log('[RP Suite][Wallet] toggle collapsed ->', nextCollapsed);
+  saveWalletUiState(ctx, $w, { collapsed: nextCollapsed, userToggled: true });
+  console.log('[RP Suite][Wallet] user toggle collapsed ->', nextCollapsed);
   requestAnimationFrame(() => clampCurrentPosition($w));
 }
 
@@ -308,7 +327,7 @@ function ensureWidget(ctx) {
       console.log('[RP Suite][Wallet] drag suppressed click');
       return;
     }
-    toggleWalletCollapsed(ctx, $w);
+    toggleWalletCollapsed(ctx, $w, e);
   });
   $w.on('click.rpsuiteWallet', `[data-${PFX}-flip]`, (e) => {
     e.stopPropagation();

@@ -11,7 +11,7 @@ const MODULE_DEFAULTS = Object.freeze({
   tarot: { current: {}, byMessage: {}, history: [] },
   comments: { author: null, sections: {}, recentAuthorReplies: [] },
   infoblock: { current: {}, byMessage: {}, history: [] },
-  wallet: { current: {}, byMessage: {}, transactions: [], history: [], ui: { position: {}, collapsed: false } },
+  wallet: { current: {}, byMessage: {}, transactions: [], history: [], ui: { position: {}, collapsed: true, userToggled: false } },
   html_creator: { byMessage: {}, history: [] },
 });
 
@@ -149,7 +149,11 @@ function normalizeModuleState(moduleId, state) {
   }
   if (moduleId === 'wallet') {
     next.transactions = trimArray(next.transactions, KEEP_HISTORY);
-    if (!isPlainObject(next.ui)) next.ui = { position: {}, collapsed: false };
+    if (!isPlainObject(next.ui)) next.ui = { position: {}, collapsed: true, userToggled: false };
+    // Migration: legacy auto-open state without a user interaction marker must not
+    // keep force-opening the wallet. Only trust collapsed:false if the user set it.
+    if (next.ui.userToggled !== true && next.ui.collapsed === false) next.ui.collapsed = true;
+    if (typeof next.ui.userToggled !== 'boolean') next.ui.userToggled = false;
   }
   return next;
 }

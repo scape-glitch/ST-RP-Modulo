@@ -21,6 +21,13 @@ export const MODULE_MAX_TOKENS = Object.freeze({
   html_creator: 5000,
 });
 
+// Token economy: never fall back to another (possibly expensive/main) model when
+// the selected connection profile fails. Cached data stays untouched instead.
+export const ALLOW_MODULE_FALLBACK = false;
+
+// Raw module responses are only previewed in logs unless debug logging is on.
+export const RAW_LOG_PREVIEW_CHARS = 1000;
+
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 export function getProfilesFromContext() {

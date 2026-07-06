@@ -1,4 +1,4 @@
-import { isModuleEnabled, MODULE_MAX_TOKENS } from './settings.js';
+import { isModuleEnabled, MODULE_MAX_TOKENS, RAW_LOG_PREVIEW_CHARS } from './settings.js';
 import { getMessageId, removeModuleResult, renderModuleResults } from './renderPipeline.js';
 import { cleanModuleRawResponse } from './jsonRepair.js';
 import {
@@ -11,7 +11,14 @@ import {
 } from './moduleState.js';
 
 const messageStates = new Map();
-const RECENT_CONTEXT_LIMIT = 5;
+const RECENT_CONTEXT_LIMIT = 2;
+const TRIM_LIMITS = Object.freeze({
+  previousUserMessage: 1200,
+  previousAssistantMessage: 2000,
+  currentAssistantMessage: 4000,
+  currentAssistantMessageComments: 5000,
+  currentAssistantMessageHtml: 6000,
+});
 const MODULE_OUTPUT_TAGS = Object.freeze({
   metrics: 'rs_metrics',
   tarot: 'tarot_reading',
@@ -55,14 +62,33 @@ function getMessageRole($mes) {
   return isUserMessage($mes) ? 'user' : 'assistant';
 }
 
+function trimMiddle(text, limit) {
+  const value = String(text || '');
+  if (value.length <= limit) return value;
+  // Preserve beginning and end; drop the middle to stay within budget.
+  const head = Math.ceil(limit * 0.6);
+  const tail = limit - head;
+  return `${value.slice(0, head)}\n[...trimmed...]\n${value.slice(-tail)}`;
+}
+
+function getCurrentMessageLimit(moduleId) {
+  if (moduleId === 'html_creator') return TRIM_LIMITS.currentAssistantMessageHtml;
+  if (moduleId === 'comments') return TRIM_LIMITS.currentAssistantMessageComments;
+  return TRIM_LIMITS.currentAssistantMessage;
+}
+
 function getRecentContext($mes) {
+  // Token economy: only previous user message + previous assistant message,
+  // both trimmed. No full chat history in module prompts.
   const rows = [];
   const previous = $mes.prevAll('.mes').toArray().reverse().slice(-RECENT_CONTEXT_LIMIT);
   for (const mes of previous) {
     const $prev = window.jQuery(mes);
     const text = getVisibleMessageText($prev);
     if (!text) continue;
-    rows.push(`${getMessageRole($prev)}: ${text}`);
+    const role = getMessageRole($prev);
+    const limit = role === 'user' ? TRIM_LIMITS.previousUserMessage : TRIM_LIMITS.previousAssistantMessage;
+    rows.push(`${role}: ${trimMiddle(text, limit)}`);
   }
   return rows.join('\n\n');
 }
@@ -92,40 +118,60 @@ function getPreviousState(mod, chatId) {
 }
 
 function formatStateForPrompt(state) {
-  try { return JSON.stringify(state ?? null, null, 2); } catch (_) { return 'null'; }
+  try { return JSON.stringify(state ?? null); } catch (_) { return 'null'; }
+}
+
+/**
+ * Token economy: returns a minimal state object per module for the prompt,
+ * instead of dumping byMessage/sections/history/raw/ui fields.
+ */
+export function getCompactModuleState(moduleId, state) {
+  if (!state || typeof state !== 'object') return null;
+  switch (moduleId) {
+    case 'metrics':
+      return { current: state.current || null };
+    case 'infoblock':
+      return { current: state.current || null };
+    case 'wallet': {
+      const transactions = Array.isArray(state.transactions) ? state.transactions.slice(-3) : [];
+      return { current: state.current || null, lastTransactions: transactions };
+    }
+    case 'comments': {
+      const recent = Array.isArray(state.recentAuthorReplies) ? state.recentAuthorReplies.slice(-3) : [];
+      return {
+        author: state.author || null,
+        recentAuthorReplies: recent.map((r) => ({ text: String(r.text || '').slice(0, 220), parentUser: r.parentUser || '', parentText: String(r.parentText || '').slice(0, 120) })),
+      };
+    }
+    case 'tarot':
+      return null; // Original logic does not require the previous reading.
+    case 'html_creator':
+      return null; // Never send previous raw HTML back to the model.
+    default:
+      return { current: state.current || null };
+  }
 }
 
 export function buildModuleUserPayload($mes, moduleCtx = {}) {
   const names = getNames(moduleCtx);
-  const latest = moduleCtx.messageText || getVisibleMessageText($mes);
+  const latest = trimMiddle(moduleCtx.messageText || getVisibleMessageText($mes), getCurrentMessageLimit(moduleCtx.moduleId));
   const recent = getRecentContext($mes);
-  const previous = moduleCtx.previousState !== undefined
-    ? `\n\nPrevious persistent module state for ${moduleCtx.moduleId || 'module'}:\n\`\`\`json\n${formatStateForPrompt(moduleCtx.previousState)}\n\`\`\``
+  const compactState = getCompactModuleState(moduleCtx.moduleId, moduleCtx.previousState);
+  const previous = compactState !== null && compactState !== undefined
+    ? `\n\nPrevious module state (compact):\n\`\`\`json\n${formatStateForPrompt(compactState)}\n\`\`\``
     : '';
-  return `Latest assistant message:\n"""\n${latest}\n"""\n\nRecent context:\n"""\n${recent || 'No recent context available.'}\n"""\n\nChat metadata:\n- Character: ${names.character || 'unknown'}\n- User: ${names.user || 'unknown'}\n- Chat: ${names.chat || 'unknown'}${previous}\n\nDo not continue the RP message. Do not write narrative text. Return only the module block. Generate only the output block required by your system prompt.`;
+  return `Latest assistant message:\n"""\n${latest}\n"""\n\nRecent context:\n"""\n${recent || 'No recent context available.'}\n"""\n\nChat metadata:\n- Character: ${names.character || 'unknown'}\n- User: ${names.user || 'unknown'}${previous}\n\nDo not continue the RP. Return only the module block required by your system prompt. Keep JSON string values concise. No extra prose. Do not over-explain.`;
 }
 
 function wrapModuleSystemPrompt(moduleId, systemPrompt) {
+  // Short wrapper (token economy): the original module prompt stays the source
+  // of truth; the module-only contract is stated once, compactly.
   const example = MODULE_OUTPUT_EXAMPLES[moduleId] || 'the required hidden module block';
-  return `SYSTEM OVERRIDE FOR MODULE GENERATION:
-You are not writing roleplay.
-You are not continuing the scene.
-You are not speaking as any character.
-You are generating machine-readable module data only.
-Output exactly one required hidden block and nothing else.
-No prose before it.
-No prose after it.
-No markdown outside the required hidden block.
-No explanations.
-
-Output only:
+  return `Return ONLY this block, no prose, no RP continuation, no markdown outside it:
 ${example}
 
-ORIGINAL MODULE PROMPT (source of truth for module logic):
-${systemPrompt}
-
-FINAL OUTPUT CONTRACT:
-Return exactly one ${example} block and nothing else.`;
+MODULE PROMPT (source of truth):
+${systemPrompt}`;
 }
 
 function getModuleGenerationSettings(moduleCtx = {}) {
@@ -154,7 +200,6 @@ function getModuleContext(ctx, mod, $mes, messageId, messageText, extra = {}) {
 async function runModuleGeneration(mod, $mes, ctx, messageId, messageText) {
   const chatId = getCurrentChatIdSafe(ctx);
   const previousState = getPreviousState(mod, chatId);
-  console.log(`[RP Suite] previous state for ${mod.id}:`, previousState);
   const moduleCtx = getModuleContext(ctx, mod, $mes, messageId, messageText, {
     chatId,
     messageKey: messageId,
@@ -171,7 +216,8 @@ async function runModuleGeneration(mod, $mes, ctx, messageId, messageText) {
   console.log(`[RP Suite] running module ${mod.id} for message ${messageId}`);
   const result = await ctx.ApiService.generateWithModuleProfile({ moduleId: mod.id, messages, settingsOverride: getModuleGenerationSettings(moduleCtx) });
   const raw = result?.text || '';
-  console.log(`[RP Suite] module ${mod.id} raw response:`, raw);
+  // Cost-friendly logging: preview only, full raw is never dumped by default.
+  console.log(`[RP Suite] module ${mod.id} raw response preview:`, String(raw).slice(0, RAW_LOG_PREVIEW_CHARS));
   const expectedTag = MODULE_OUTPUT_TAGS[mod.id];
   const cleanedRaw = cleanModuleRawResponse(raw, expectedTag);
   if (expectedTag && cleanedRaw.trim() !== String(raw || '').trim()) console.warn('[RP Suite] module raw contained extra prose, stripped before parsing', { moduleId: mod.id, expectedTag });
@@ -187,7 +233,7 @@ async function runModuleGeneration(mod, $mes, ctx, messageId, messageText) {
       if (previousState.sections && !nextState.sections) nextState.sections = previousState.sections;
       if (previousState.ui && !nextState.ui) nextState.ui = previousState.ui;
     }
-    console.log(`[RP Suite] updated state for ${mod.id}:`, nextState);
+    console.log(`[RP Suite] updated state for ${mod.id}`);
     setModuleState(chatId, mod.id, nextState);
     persistModuleMessageResult(chatId, mod, messageId, { raw: cleanedRaw, parsed, stateBefore: previousState, stateAfter: nextState });
     console.log(`[RP Suite] saved state for ${mod.id}`);
@@ -239,6 +285,7 @@ function buildCachedRenderItem(mod, $mes, ctx, messageKey, messageText) {
   const storedState = getModuleState(chatId, mod.id) || null;
   const cached = getModuleMessageData(chatId, mod.id, messageKey);
   if (!cached) return null;
+  console.log('[RP Suite][Cost] skip API, cached data exists', { moduleId: mod.id, messageKey });
   const parsed = mod.id === 'comments' ? (cached.generatedComments || []) : (cached.parsed || cached);
   if (mod.id === 'comments' && !parsed.length) return null;
   const stateAfter = mod.id === 'comments'

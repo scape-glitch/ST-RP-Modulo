@@ -17,6 +17,7 @@ const ICONS_SVG = {
   comment: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="${PFX}-icon"><path d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>`,
   retweet: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="${PFX}-icon"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>`,
   heart: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="${PFX}-icon"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21.2l7.8-7.8 1-1a5.5 5.5 0 0 0 0-7.8z"/></svg>`,
+  heartLiked: `<svg viewBox="0 0 24 24" fill="#f91880" stroke="#f91880" stroke-width="2" class="${PFX}-icon"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21.2l7.8-7.8 1-1a5.5 5.5 0 0 0 0-7.8z"/></svg>`,
   share: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="${PFX}-icon"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/><line x1="15.4" y1="6.5" x2="8.6" y2="10.5"/></svg>`,
   verified: `<svg viewBox="0 0 24 24" fill="#1d9bf0" class="${PFX}-verified-icon"><path d="M22.5 12l-2.4 2.7.3 3.6-3.6.8-1.9 3-3.1-1.5-3.1 1.5-1.9-3-3.6-.8.3-3.6L1 12l2.4-2.7-.3-3.6 3.6-.8 1.9-3 3.1 1.5 3.1-1.5 1.9 3 3.6.8-.3 3.6L22.5 12z"/><path d="M10.5 15.5L7.5 12.5l1.4-1.4 1.6 1.6 4.6-4.6 1.4 1.4z" fill="#fff"/></svg>`,
   xtwitter: `<svg viewBox="0 0 24 24" fill="currentColor" class="${PFX}-x-logo"><path d="M18.9 2H22l-6.8 7.8L23.2 22h-6.3l-4.9-7.4L6.4 22H3.3l7.3-8.4L2.8 2h6.4l4.4 6.8L18.9 2zm-1.1 17.9h1.7L8.3 4H6.4l11.4 15.9z"/></svg>`,
@@ -40,32 +41,41 @@ export function getDefaultState() {
 function normalizeComment(comment, index, section = {}) {
   const baseId = comment.id || `${comment.username || 'user'}-${index}`;
   const id = String(baseId).replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 80) || `comment-${index}`;
-  const previousLikes = section.likes?.[id];
-  const previousReplies = Array.isArray(section.replies) ? section.replies.filter((r) => r.commentId === id) : [];
+  const previousReplies = Array.isArray(section.replies) ? section.replies.filter((r) => r.parentIdx === index || r.commentId === id) : [];
   return {
     ...comment,
     id,
-    likes: Number(previousLikes ?? comment.likes ?? 0),
+    likes: Number(comment.likes ?? 0),
     replies: Number(comment.replies || 0) + previousReplies.length,
   };
+}
+
+function normalizeSectionUi(section = {}) {
+  // Migration-friendly: old sections may miss ui/userLikes — never break them.
+  const ui = section.ui && typeof section.ui === 'object' ? section.ui : {};
+  const userLikes = {};
+  const source = section.userLikes && typeof section.userLikes === 'object' ? section.userLikes : {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value === true) userLikes[key] = true;
+  }
+  return { ui: { collapsed: ui.collapsed === true }, userLikes };
 }
 
 export function updateState(previousState = getDefaultState(), parsedData = [], ctx = {}) {
   const messageId = String(ctx.messageId || Date.now());
   const previous = previousState || getDefaultState();
   const oldSection = previous.sections?.[messageId] || {};
+  const { ui, userLikes } = normalizeSectionUi(oldSection);
   const generatedComments = (Array.isArray(parsedData) ? parsedData : [])
     .map((comment, index) => normalizeComment(comment, index, oldSection));
   const section = {
-    likes: { ...(oldSection.likes || {}) },
+    userLikes,
     replies: Array.isArray(oldSection.replies) ? oldSection.replies : [],
     generatedComments,
+    ui,
     ts: oldSection.ts || Date.now(),
     prompted: true,
   };
-  for (const comment of generatedComments) {
-    if (section.likes[comment.id] === undefined) section.likes[comment.id] = Number(comment.likes || 0);
-  }
   return {
     author: previous.author || defaultAuthor(),
     sections: trimCommentSectionsForSave({ ...(previous.sections || {}), [messageId]: section }),
@@ -79,27 +89,24 @@ function getSectionForRender(data, ctx = {}) {
   const section = state?.sections?.[messageId];
   if (section) return section;
   return {
-    likes: {},
+    userLikes: {},
     replies: [],
     generatedComments: Array.isArray(data) ? data.map((comment, index) => normalizeComment(comment, index)) : [],
+    ui: { collapsed: false },
     ts: Date.now(),
   };
 }
 
-function getLabels(lang) {
-  return lang === 'ru'
-    ? { title: '💬 Комментарии', like: 'Нравится', authorReply: 'Ответ автора', placeholder: 'Ваш ответ...', send: 'Отправить', author: 'Автор' }
-    : { title: '💬 Comments', like: 'Like', authorReply: 'Author reply', placeholder: 'Your reply...', send: 'Send', author: 'Author' };
-}
-
 export function init(ctx) {
+  // Delegated handlers on document survive every re-render/cached render of
+  // comment sections, so no per-widget rebinding or double-binding can happen.
   const $ = ctx.$ || window.jQuery;
   $(document).off('.rpsuiteComments')
     .on('click.rpsuiteComments', `.${PFX}-action-like`, (e) => handleLike(e, ctx))
     .on('click.rpsuiteComments', `.${PFX}-action-replybtn`, (e) => openReplyBox(e, ctx))
     .on('click.rpsuiteComments', `.${PFX}-del-reply`, (e) => deleteReply(e, ctx))
-    .on('click.rpsuiteComments', `[data-${PFX}-toggle]`, function (e) { if (!$(e.target).closest(`[data-${PFX}-profile]`).length) $(this).closest(`.${PFX}-container`).toggleClass('collapsed'); })
-    .on('click.rpsuiteComments', `[data-${PFX}-profile]`, () => openProfileModal(ctx));
+    .on('click.rpsuiteComments', `[data-${PFX}-toggle]`, (e) => handleCollapseToggle(e, ctx))
+    .on('click.rpsuiteComments', `[data-${PFX}-profile]`, (e) => { e.stopPropagation(); openProfileModal(ctx); });
 }
 
 export function destroy(ctx) {
@@ -113,19 +120,16 @@ function withCommentsState(ctx, messageId, mutator) {
   const state = getModuleState(chatId, 'comments') || getDefaultState();
   state.author = state.author || defaultAuthor();
   state.sections = state.sections || {};
-  state.sections[messageId] = state.sections[messageId] || { likes: {}, replies: [], generatedComments: [], ts: Date.now() };
+  state.sections[messageId] = state.sections[messageId] || { userLikes: {}, replies: [], generatedComments: [], ui: { collapsed: false }, ts: Date.now() };
   mutator(state, state.sections[messageId]);
   state.sections = trimCommentSectionsForSave(state.sections);
   setModuleState(chatId, 'comments', state);
   return state;
 }
 
-function updateCommentDom($card, section) {
-  const $ = window.jQuery;
-  for (const [idx, count] of Object.entries(section.likes || {})) {
-    $card.find(`.${PFX}-action-like[data-comment-idx="${idx}"] .${PFX}-likes-count`).text(formatNumber(count));
-  }
-  $card.find(`.${PFX}-feed`).html(renderFeed(section.generatedComments || [], section, $card.attr('data-section')));
+function updateCommentDom($card, section, ctx = {}) {
+  const comments = (section.generatedComments || []).map((comment, index) => normalizeComment(comment, index, section));
+  $card.find(`.${PFX}-feed`).html(renderFeed(comments, section, $card.attr('data-section'), ctx));
 }
 
 function formatNumber(n) {
@@ -183,10 +187,13 @@ function renderComment(c, comments, depth, repliesByParent, section, author) {
   const isReply = depth > 0;
   const replyTo = isReply && c.is_reply_to !== null && comments[c.is_reply_to] ? `@${esc(comments[c.is_reply_to].username)}` : '';
   const [c1, c2] = gradientFor(c.username || c.display_name);
-  const likes = section.likes?.[c._idx] ?? section.likes?.[c.id] ?? c.likes ?? 0;
+  const baseLikes = Number(c.likes || 0);
+  const liked = section.userLikes?.[String(c._idx)] === true;
+  const shownLikes = baseLikes + (liked ? 1 : 0);
+  const heart = liked ? ICONS_SVG.heartLiked : ICONS_SVG.heart;
   let html = `<div class="${PFX}-tweet ${isReply ? `${PFX}-reply` : ''}" data-depth="${d}" style="${isReply ? `margin-left:${d * 24}px;` : ''}">`;
   if (replyTo) html += `<div class="${PFX}-reply-line">↳ ${replyTo}</div>`;
-  html += `<div class="${PFX}-tweet-body"><div class="${PFX}-avatar" style="background:linear-gradient(135deg, ${c1}, ${c2});"><span class="${PFX}-avatar-emoji">${esc(c.avatar_emoji || '👤')}</span></div><div class="${PFX}-content"><div class="${PFX}-user"><span class="${PFX}-display-name">${esc(c.display_name)}</span>${c.verified ? `<span class="${PFX}-verified">${ICONS_SVG.verified}</span>` : ''}<span class="${PFX}-username">@${esc(c.username)}</span><span class="${PFX}-time">· ${esc(c.time)}</span></div><div class="${PFX}-text">${renderMarkdownSafe(c.comment, { compact: true })}</div><div class="${PFX}-actions"><span class="${PFX}-action ${PFX}-action-replybtn" data-reply-to="${c._idx}" title="Ответить">${ICONS_SVG.comment} ${formatNumber(c.replies)}</span><span class="${PFX}-action ${PFX}-action-rt">${ICONS_SVG.retweet} ${formatNumber(c.retweets)}</span><span class="${PFX}-action ${PFX}-action-like" data-action="like" data-comment-idx="${c._idx}" data-likes="${likes}">${ICONS_SVG.heart} <span class="${PFX}-likes-count">${formatNumber(likes)}</span></span><span class="${PFX}-action">${ICONS_SVG.share}</span></div><div class="${PFX}-reply-box-slot" data-slot-for="${c._idx}"></div></div></div>`;
+  html += `<div class="${PFX}-tweet-body"><div class="${PFX}-avatar" style="background:linear-gradient(135deg, ${c1}, ${c2});"><span class="${PFX}-avatar-emoji">${esc(c.avatar_emoji || '👤')}</span></div><div class="${PFX}-content"><div class="${PFX}-user"><span class="${PFX}-display-name">${esc(c.display_name)}</span>${c.verified ? `<span class="${PFX}-verified">${ICONS_SVG.verified}</span>` : ''}<span class="${PFX}-username">@${esc(c.username)}</span><span class="${PFX}-time">· ${esc(c.time)}</span></div><div class="${PFX}-text">${renderMarkdownSafe(c.comment, { compact: true })}</div><div class="${PFX}-actions"><span class="${PFX}-action ${PFX}-action-replybtn" data-reply-to="${c._idx}" title="Ответить">${ICONS_SVG.comment} ${formatNumber(c.replies)}</span><span class="${PFX}-action ${PFX}-action-rt">${ICONS_SVG.retweet} ${formatNumber(c.retweets)}</span><span class="${PFX}-action ${PFX}-action-like ${liked ? 'liked' : ''}" data-action="like" data-comment-idx="${c._idx}" data-likes="${baseLikes}">${heart} <span class="${PFX}-likes-count">${formatNumber(shownLikes)}</span></span><span class="${PFX}-action">${ICONS_SVG.share}</span></div><div class="${PFX}-reply-box-slot" data-slot-for="${c._idx}"></div></div></div>`;
   if (c._children?.length) html += `<div class="${PFX}-thread">${c._children.map((child) => renderComment(child, comments, depth + 1, repliesByParent, section, author)).join('')}</div>`;
   const own = repliesByParent[c._idx] || [];
   if (own.length) html += `<div class="${PFX}-thread">${own.map((r) => renderAuthorReply(r, depth + 1, author)).join('')}</div>`;
@@ -209,24 +216,58 @@ function renderFeed(comments, section, messageId, ctx = {}) {
 }
 
 function handleLike(event, ctx) {
+  // Pure UI interaction: toggles the user's like in persistent state, no API call.
   event.preventDefault();
+  event.stopPropagation();
   const $ = ctx.$ || window.jQuery;
   const $button = $(event.currentTarget);
   const $card = $button.closest(`.${PFX}-container`);
   const messageId = String($card.attr('data-section') || '');
   const commentIdx = String($button.attr('data-comment-idx') || '');
   if (!messageId || commentIdx === '') return;
-  const next = withCommentsState(ctx, messageId, (_, section) => {
-    section.likes = section.likes || {};
-    section.likes[commentIdx] = Number(section.likes[commentIdx] ?? $button.attr('data-likes') ?? 0) + 1;
-    const generated = section.generatedComments?.[Number(commentIdx)];
-    if (generated) generated.likes = section.likes[commentIdx];
+  const baseLikes = parseInt($button.attr('data-likes'), 10) || 0;
+  let liked = false;
+  withCommentsState(ctx, messageId, (_, section) => {
+    section.userLikes = section.userLikes && typeof section.userLikes === 'object' ? section.userLikes : {};
+    if (section.userLikes[commentIdx] === true) {
+      delete section.userLikes[commentIdx];
+      liked = false;
+    } else {
+      section.userLikes[commentIdx] = true;
+      liked = true;
+    }
   });
-  updateCommentDom($card, next.sections[messageId]);
+  const shown = Math.max(0, baseLikes + (liked ? 1 : 0));
+  if (liked) {
+    $button.addClass('liked').html(`${ICONS_SVG.heartLiked} <span class="${PFX}-likes-count">${formatNumber(shown)}</span>`);
+  } else {
+    $button.removeClass('liked').html(`${ICONS_SVG.heart} <span class="${PFX}-likes-count">${formatNumber(shown)}</span>`);
+  }
+  console.log('[RP Suite][Comments] like toggled', { messageKey: messageId, commentId: commentIdx, liked, likes: shown });
+}
+
+function handleCollapseToggle(event, ctx) {
+  // Header click toggles the section; persisted per messageKey. No API call.
+  const $ = ctx.$ || window.jQuery;
+  if ($(event.target).closest(`[data-${PFX}-profile]`).length) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const $card = $(event.currentTarget).closest(`.${PFX}-container`);
+  const messageId = String($card.attr('data-section') || '');
+  const collapsed = !$card.hasClass('collapsed');
+  $card.toggleClass('collapsed', collapsed);
+  if (messageId) {
+    withCommentsState(ctx, messageId, (_, section) => {
+      section.ui = section.ui && typeof section.ui === 'object' ? section.ui : {};
+      section.ui.collapsed = collapsed;
+    });
+  }
+  console.log('[RP Suite][Comments] collapsed ->', collapsed, { messageKey: messageId });
 }
 
 function openReplyBox(event, ctx) {
   event.preventDefault();
+  event.stopPropagation();
   const $ = ctx.$ || window.jQuery;
   const $btn = $(event.currentTarget);
   const idx = Number($btn.attr('data-reply-to'));
@@ -235,30 +276,37 @@ function openReplyBox(event, ctx) {
   const section = getModuleState(getCurrentChatIdSafe(ctx), 'comments')?.sections?.[messageId] || {};
   const parent = section.generatedComments?.[idx];
   if (!parent) return;
-  $card.find(`.${PFX}-reply-box`).remove();
   const $slot = $card.find(`.${PFX}-reply-box-slot[data-slot-for="${idx}"]`);
+  // Second click on the reply button closes the box (original behavior).
+  if ($slot.find(`.${PFX}-reply-box`).length) { $slot.find(`.${PFX}-reply-box`).remove(); return; }
+  $card.find(`.${PFX}-reply-box`).remove();
   const $box = $(`<div class="${PFX}-reply-box"><textarea maxlength="${REPLY_LIMIT + 50}" placeholder="Ответить @${esc(parent.username)}..."></textarea><div class="${PFX}-reply-box-foot"><span class="${PFX}-char-count">0/${REPLY_LIMIT}</span><button class="${PFX}-btn ${PFX}-btn-cancel" data-act="cancel">Отмена</button><button class="${PFX}-btn ${PFX}-btn-send" data-act="send" disabled>Ответить</button></div></div>`);
   $slot.append($box);
   const $ta = $box.find('textarea').trigger('focus');
   $ta.on('input', function () { const len = this.value.length; $box.find(`.${PFX}-char-count`).text(`${len}/${REPLY_LIMIT}`).toggleClass('over', len > REPLY_LIMIT); $box.find('[data-act=send]').prop('disabled', len === 0 || len > REPLY_LIMIT); });
-  $box.on('click', '[data-act=cancel]', () => $box.remove());
-  $box.on('click', '[data-act=send]', () => {
+  $ta.on('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $box.find('[data-act=send]').trigger('click'); }
+  });
+  $box.on('click', '[data-act=cancel]', (e) => { e.stopPropagation(); $box.remove(); });
+  $box.on('click', '[data-act=send]', (e) => {
+    e.stopPropagation();
     const text = String($ta.val() || '').trim();
     if (!text || text.length > REPLY_LIMIT) return;
+    const reply = { id: `ar_${Date.now()}_${Math.random().toString(16).slice(2)}`, parentIdx: idx, parentId: parent.id, parentUser: parent.username, parentText: parent.comment, text, time: 'now', ts: Date.now(), author: true };
     const next = withCommentsState(ctx, messageId, (state, sec) => {
       sec.replies = Array.isArray(sec.replies) ? sec.replies : [];
-      const reply = { id: `ar_${Date.now()}_${Math.random().toString(16).slice(2)}`, parentIdx: idx, parentUser: parent.username, parentText: parent.comment, text, time: 'now', ts: Date.now() };
       sec.replies.push(reply);
       sec.replies = sec.replies.slice(-30);
-      if (sec.generatedComments?.[idx]) sec.generatedComments[idx].replies = Number(sec.generatedComments[idx].replies || 0) + 1;
       state.recentAuthorReplies = [...(Array.isArray(state.recentAuthorReplies) ? state.recentAuthorReplies : []), reply].slice(-30);
     });
-    updateCommentDom($card, next.sections[messageId]);
+    console.log('[RP Suite][Comments] author reply saved', { messageKey: messageId, parentId: reply.parentId, id: reply.id });
+    updateCommentDom($card, next.sections[messageId], ctx);
   });
 }
 
 function deleteReply(event, ctx) {
   event.preventDefault();
+  event.stopPropagation();
   const $ = ctx.$ || window.jQuery;
   const $card = $(event.currentTarget).closest(`.${PFX}-container`);
   const messageId = String($card.attr('data-section') || '');
@@ -267,7 +315,7 @@ function deleteReply(event, ctx) {
     section.replies = (section.replies || []).filter((r) => r.id !== rid);
     state.recentAuthorReplies = (state.recentAuthorReplies || []).filter((r) => r.id !== rid);
   });
-  updateCommentDom($card, next.sections[messageId]);
+  updateCommentDom($card, next.sections[messageId], ctx);
 }
 
 function openProfileModal(ctx = {}) {
@@ -294,7 +342,11 @@ export function render(data, ctx = {}) {
   const messageId = String(ctx.messageId || '');
   const section = clone(getSectionForRender(data, ctx));
   if (!section.generatedComments?.length) return '';
+  const { ui, userLikes } = normalizeSectionUi(section);
+  section.ui = ui;
+  section.userLikes = userLikes;
   const comments = section.generatedComments.map((comment, index) => normalizeComment(comment, index, section));
   section.generatedComments = comments;
-  return `<div class="${PFX}-container" data-section="${esc(messageId)}"><div class="${PFX}-header" data-${PFX}-toggle="true"><div class="${PFX}-header-side">${ICONS_SVG.chevronDown}</div><div class="${PFX}-header-center">${ICONS_SVG.xtwitter}<span class="${PFX}-header-text">Комментарии</span></div><div class="${PFX}-header-gear" data-${PFX}-profile title="Профиль автора">${ICONS_SVG.gear}</div></div><div class="${PFX}-feed">${renderFeed(comments, section, messageId, ctx)}</div></div>`;
+  const collapsedClass = section.ui.collapsed ? ' collapsed' : '';
+  return `<div class="${PFX}-container${collapsedClass}" data-section="${esc(messageId)}"><div class="${PFX}-header" data-${PFX}-toggle="true"><div class="${PFX}-header-side">${ICONS_SVG.chevronDown}</div><div class="${PFX}-header-center">${ICONS_SVG.xtwitter}<span class="${PFX}-header-text">Комментарии</span></div><div class="${PFX}-header-gear" data-${PFX}-profile title="Профиль автора">${ICONS_SVG.gear}</div></div><div class="${PFX}-feed">${renderFeed(comments, section, messageId, ctx)}</div></div>`;
 }

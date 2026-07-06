@@ -88,9 +88,17 @@ function colorFor(value, type) {
   return '#61afef';
 }
 
+function extractCharacters(source) {
+  if (!source || typeof source !== 'object') return null;
+  if (Array.isArray(source.characters) && source.characters.length) return source.characters;
+  if (Array.isArray(source.current?.characters) && source.current.characters.length) return source.current.characters;
+  return null;
+}
+
 function normalizeMetricsData(data = {}, ctx = {}) {
-  const source = ctx.currentState?.current || data || {};
-  const chars = Array.isArray(source.characters) ? source.characters : null;
+  // Prefer freshly parsed data; fall back to persisted state for cached renders.
+  const chars = extractCharacters(data) || extractCharacters(ctx.currentState) || extractCharacters(ctx.currentState?.current);
+  const source = extractCharacters(data) ? data : (ctx.currentState?.current || data || {});
   if (chars?.length) return chars.map((c) => ({
     name: c.name || c.character || 'Character',
     mood: c.mood || c.relationship || '',
@@ -172,8 +180,13 @@ function characterCard(c, lang, first) {
   </div></div></div>`;
 }
 
-export function render(data, { lang = 'ru', currentState = null } = {}) {
-  const metrics = normalizeMetricsData(data, { currentState });
-  if (!metrics.length) return '';
-  return `<div class="${PFX}-container" data-${PFX}-theme="${esc(getTheme())}">${metrics.map((c, i) => characterCard(c, lang, i === 0)).join('')}</div>`;
+export function render(data, { lang = 'ru', currentState = null, stContext = null } = {}) {
+  const metrics = normalizeMetricsData(data, { currentState, stContext });
+  const characters = Array.isArray(metrics) ? metrics : [];
+  console.log('[RP Suite][Metrics] render characters', characters.length, characters.map((c) => c.name));
+  if (!characters.length) {
+    console.log('[RP Suite][Metrics] empty characters, skip widget render');
+    return '';
+  }
+  return `<div class="${PFX}-container" data-${PFX}-theme="${esc(getTheme())}">${characters.map((c, i) => characterCard(c, lang, i === 0)).join('')}</div>`;
 }

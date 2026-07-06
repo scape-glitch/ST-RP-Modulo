@@ -1,9 +1,7 @@
 import { parseTaggedJSON } from '../../core/jsonRepair.js';
 
-export function parse(messageText) {
-  const data = parseTaggedJSON(messageText, 'rs_metrics', null);
-  if (!data) return null;
-  const defaults = (c = {}) => ({
+function characterDefaults(c = {}) {
+  return {
     name: c.name || c.character || 'Unknown',
     color: c.color || '#888888',
     mood: c.mood || 'neutral',
@@ -22,7 +20,31 @@ export function parse(messageText) {
     respect_hex: c.respect_hex || '#99ccff',
     secret: c.secret || '',
     insight: c.insight || '',
-  });
-  if (Array.isArray(data.characters)) return { characters: data.characters.map(defaults).filter((c) => c.name) };
-  return { characters: [defaults(data)] };
+  };
+}
+
+/**
+ * Normalizes every accepted metrics payload shape to { characters: [...] }.
+ * Accepted shapes:
+ *  1. { characters: [...] }
+ *  2. { current: { characters: [...] } }
+ *  3. legacy top-level { arousal, grudge, respect, relationship, intention, insight }
+ */
+export function normalizeMetricsData(data) {
+  if (!data || typeof data !== 'object') return null;
+  const container = Array.isArray(data.characters)
+    ? data
+    : (Array.isArray(data.current?.characters) ? data.current : null);
+  if (container) {
+    const characters = container.characters.map(characterDefaults).filter((c) => c.name);
+    return { characters };
+  }
+  // Legacy top-level single character payload.
+  return { characters: [characterDefaults(data)] };
+}
+
+export function parse(messageText) {
+  const data = parseTaggedJSON(messageText, 'rs_metrics', null);
+  if (!data) return null;
+  return normalizeMetricsData(data);
 }

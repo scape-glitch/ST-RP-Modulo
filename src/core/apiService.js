@@ -1,4 +1,4 @@
-import { getModuleSettings, MODULE_MAX_TOKENS } from './settings.js';
+import { ALLOW_MODULE_FALLBACK, getModuleSettings, MODULE_MAX_TOKENS } from './settings.js';
 
 const abortControllers = new Map();
 
@@ -77,6 +77,7 @@ export const ApiService = {
     const maxTokens = settingsOverride.max_tokens ?? moduleSettings.max_tokens ?? MODULE_MAX_TOKENS[moduleId] ?? 1000;
     const prompt = messagesToPrompt(messages);
 
+    console.log('[RP Suite][Cost] API call', { moduleId, maxTokens, inputChars: prompt.length });
     console.log('[RP Suite] API via ConnectionManagerRequestService', {
       moduleId,
       profileId: selectedProfileId,
@@ -104,20 +105,30 @@ export const ApiService = {
         response = await ctx.ConnectionManagerRequestService.sendRequest(selectedProfileId, prompt, maxTokens);
         text = extractText(response);
       } catch (error) {
+        // Token economy: do NOT chain another (potentially expensive/main-model)
+        // generation on quota/API failure unless fallback is explicitly enabled.
+        if (!ALLOW_MODULE_FALLBACK) {
+          console.error('[RP Suite][Cost] module API failed, fallback disabled', { moduleId, error: String(error?.message || error) });
+          throw error;
+        }
         console.warn('[RP Suite] Connection profile failed, fallback to generateQuietPrompt', error);
         const fallback = await runFallback();
         response = fallback.response;
         text = fallback.text;
       }
-    } else {
+    } else if (ALLOW_MODULE_FALLBACK) {
       if (moduleSettings.connectionProfile && moduleSettings.connectionProfile !== '__current__') {
         console.warn('[RP Suite] Connection profile not found, fallback to generateQuietPrompt', moduleSettings.connectionProfile);
       }
       const fallback = await runFallback();
       response = fallback.response;
       text = fallback.text;
+    } else {
+      console.error('[RP Suite][Cost] no connection profile available and fallback disabled', { moduleId, connectionProfile: moduleSettings.connectionProfile || '' });
+      throw new Error(`RP Suite: no connection profile for module ${moduleId} and fallback is disabled`);
     }
 
+    console.log('[RP Suite][Cost] response received', { moduleId, outputChars: String(text || '').length });
     return {
       text,
       raw: response,
