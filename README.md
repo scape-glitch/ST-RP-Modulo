@@ -106,7 +106,3 @@ Important source folders:
 - `src/core/` — settings, registry, prompt injection, rendering pipeline, storage, API helpers.
 - `src/ui/` — drawer controls and UI rendering.
 - `src/modules/` — Metrics, Tarot, Comments, Infoblock, Wallet, and HTML Creator modules.
-
-## License
-
-No explicit license file is currently included. Add a `LICENSE` file before publishing under a specific open-source license.
